@@ -2,7 +2,7 @@ name := "daffodil"
 
 organization in ThisBuild := "edu.illinois.ncsa"
 
-scalaVersion in ThisBuild := "2.10.4"
+scalaVersion in ThisBuild := "2.11.0"
 
 scalacOptions in ThisBuild ++= Seq("-unchecked", "-deprecation", "-Xfatal-warnings")
 
@@ -17,6 +17,9 @@ transitiveClassifiers := Seq("sources", "javadoc")
 resolvers in ThisBuild += "NCSA Sonatype Releases" at "https://opensource.ncsa.illinois.edu/nexus/content/repositories/releases"
 
 libraryDependencies in ThisBuild := Seq(
+  "org.scala-lang.modules" %% "scala-xml" % "1.0.1",
+  "org.scala-lang.modules" %% "scala-parser-combinators" % "1.0.1",
+  "org.scala-lang" % "scala-actors" % "2.11.0",
   "junit" % "junit" % "4.11",
   "com.novocode" % "junit-interface" % "0.10-M4",
   "org.jdom" % "jdom2" % "2.0.5",
