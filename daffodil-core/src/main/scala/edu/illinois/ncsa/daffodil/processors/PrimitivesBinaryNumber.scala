@@ -98,7 +98,7 @@ abstract class BinaryNumberBase[T](val e: ElementBase) extends Terminal(e, true)
   val (staticJByteOrder, label) = {
     if (e.byteOrder.isConstant) {
       val staticByteOrderString = e.byteOrder.constantAsString
-      val staticByteOrder = ByteOrder(staticByteOrderString, context)
+      val staticByteOrder = ByteOrder(Found("byteOrder", staticByteOrderString, context), context)
       staticByteOrder match {
         case ByteOrder.BigEndian => (java.nio.ByteOrder.BIG_ENDIAN, "BE")
         case ByteOrder.LittleEndian => (java.nio.ByteOrder.LITTLE_ENDIAN, "LE")

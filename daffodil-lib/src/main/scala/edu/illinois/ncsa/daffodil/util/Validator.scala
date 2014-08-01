@@ -101,6 +101,7 @@ object Validator extends NoBindingFactoryAdapter {
       f.setFeature("http://apache.org/xml/features/validation/dynamic", true)
       f.setFeature("http://apache.org/xml/features/validation/schema", true)
       f.setFeature("http://apache.org/xml/features/validation/schema-full-checking", true)
+      f.setFeature("http://apache.org/xml/features/validation/schema/normalized-value", false)
       //f.setValidating(true)
       parser = f.newSAXParser()
     } catch {

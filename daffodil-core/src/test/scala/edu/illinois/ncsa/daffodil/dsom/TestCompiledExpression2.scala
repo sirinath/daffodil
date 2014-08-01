@@ -82,7 +82,7 @@ class TestCompiledExpression2 extends WithParseErrorThrowing {
     val dummyState = PState.createInitialState(sset.schemaComponentRegistry, edecl, "", 0, Fakes.fakeDP)
     val ec = new ExpressionCompiler(edecl)
     val xpathString = "{ /tns:root/text() }"
-    val compiled = ec.compile(ConvertToType.String, Found(xpathString, edecl)) // as a string
+    val compiled = ec.compile(ConvertToType.String, Found("xpathString", xpathString, edecl)) // as a string
     val R(result, _) = compiled.evaluate(root, new VariableMap(), dummyState)
 
     assertEquals("19", result)
@@ -169,7 +169,7 @@ class TestCompiledExpression2 extends WithParseErrorThrowing {
     context = edecl
     val ec = new ExpressionCompiler(edecl)
     val xpathString = "{ /tns:doesntExist/text() }"
-    val compiled = ec.compile(ConvertToType.String, Found(xpathString, edecl)) // as a string
+    val compiled = ec.compile(ConvertToType.String, Found("xpathString", xpathString, edecl)) // as a string
     val st = PState.createInitialState(sset.schemaComponentRegistry, edecl, "x", 0, Fakes.fakeDP)
     withParseErrorThrowing(st) {
       val e = intercept[ParseError] {

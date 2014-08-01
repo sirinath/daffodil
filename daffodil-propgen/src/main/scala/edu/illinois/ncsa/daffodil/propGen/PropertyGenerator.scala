@@ -314,7 +314,7 @@ class PropertyGenerator(arg: Node) {
 
   val templateStart =
     """sealed trait Currency extends Currency.Value
-object Currency extends Enum[Currency] {
+object Currency extends Enum[Currency] with %s {
 """
   val templateMiddle =
     """  case object EUR extends Currency ; forceConstruction(EUR)
@@ -322,7 +322,7 @@ object Currency extends Enum[Currency] {
 
   // Modified to pass the context, so diagnostics can be better.
   val templateEnd = """
-  def apply(name: String, context : ThrowsSDE) : Currency = stringToEnum("currency", name, context)
+  def apply(name: Found, context : ThrowsSDE) : Currency = stringToEnum("currency", normalizePropertyValue(name), context)
 }"""
   val templateMixin = """
   
@@ -337,9 +337,9 @@ trait CurrencyMixin extends PropertyMixin {
    * location, not the point of use of the property.
    */
   lazy val (currency, currency_location) = {
-    val Found(propRawVal, propLoc) = findProperty("currency")
-    val propVal = Currency(propRawVal, this)
-    (propVal, propLoc)
+    val prop = findProperty("currency")
+    val propVal = Currency(prop, this)
+    (propVal, prop.location)
   }
   /**
    * get Some(property value) or None if not defined in scope.
@@ -353,9 +353,9 @@ trait CurrencyMixin extends PropertyMixin {
   lazy val currencyLookupResult = findPropertyOption("currency")
   lazy val (optionCurrency, optionCurrency_location) = {
     currencyLookupResult match {
-      case Found(propRawVal, propLoc) => {
-        val propVal = Currency(propRawVal, this)
-        (Some(propVal), Some(propLoc))    
+      case prop: Found => {
+        val propVal = Currency(prop, this)
+        (Some(propVal), Some(prop.location))    
       }
       case NotFound(_, _) => (None, None)
     }
@@ -414,7 +414,7 @@ trait CurrencyMixin extends PropertyMixin {
       val pvalueAsIdentifier = if (pvalue.charAt(0).isDigit) "INTEGER_" + pvalue else pvalue
       middle.replace("EUR", initialUpperCase(pvalueAsIdentifier))
     })
-    val start = templateStart.replaceAll("Currency", traitName)
+    val start = String.format(templateStart.replaceAll("Currency", traitName), getNormalizationTraitName(pname))
     val end = templateEnd.replaceAll("Currency", traitName).replaceAll("currency", propName)
     val mixin =
       if (excludeRuntimeProperties(propName)) "\n"
@@ -428,8 +428,8 @@ trait CurrencyMixin extends PropertyMixin {
   def generateEnumInstantiation(propName: String, typeName: String) = {
     val midTemplate =
       """  lazy val (EUR, EUR_location) = {
-      val Found(propVal, propLoc) = findProperty("EUR")
-      (Currency(propVal, this), propLoc)
+      val prop = findProperty("EUR")
+      (Currency(prop, this), prop.location)
      }
 """
     val mid =
@@ -442,29 +442,44 @@ trait CurrencyMixin extends PropertyMixin {
 
   val stringPropertyTemplate = """
 trait CurrencyMixin { /* nothing */ }
-object Currency {
-    def apply(s : String, self : ThrowsSDE) = s
+object Currency extends %s {
+    def apply(p : Found, self : ThrowsSDE) = normalizePropertyValue(p)
 }
 """
 
   val intPropertyTemplate = """
 trait CurrencyMixin { /* nothing */ }
-object Currency {
-    def apply(s : String, self : ThrowsSDE) = s.toInt
+object Currency extends %s {
+    def apply(p : Found, self : ThrowsSDE) = normalizePropertyValue(p).toInt
 }
 """
 
+  def getNormalizationTraitName(pname: String) = pname match {
+    case "NonNormalizedDFDLStringLiteral" => "NonNormalizedProperty"
+    case "DFDLRegularExpression" => "NonNormalizedProperty"
+    case "ByteOrderEnum_Or_DFDLExpression" => "NormalizedExpression"
+    case "EncodingEnum_Or_DFDLExpression" => "NormalizedExpression"
+    case "BinaryFloatRepEnum_Or_DFDLExpression" => "NormalizedExpression"
+    case "DFDLStringLiteral_Or_DFDLExpression" => "NormalizedExpression"
+    case "ListOfDFDLStringLiteral_Or_DFDLExpression" => "NormalizedExpression"
+    case "DFDLNonNegativeInteger_Or_DFDLExpression" => "NormalizedExpression"
+    case "DFDLExpression" => "NormalizedExpression"
+    case "DFDLExpressionOrNothing" => "NormalizedExpression"
+    case "DFDLExpressionOrPatternOrNothing" => "NormalizedExpression"
+    case _ => "NormalizedProperty"
+  }
+  
   def generateStringProperty(pname: String) = {
     val traitName = initialUpperCase(pname)
     val propName = initialLowerCase(pname)
-    val res = stringPropertyTemplate.replaceAll("Currency", traitName).replaceAll("currency", propName)
+    val res = String.format(stringPropertyTemplate.replaceAll("Currency", traitName).replaceAll("currency", propName), getNormalizationTraitName(pname))
     res
   }
 
   def generateIntProperty(pname: String) = {
     val traitName = initialUpperCase(pname)
     val propName = initialLowerCase(pname)
-    val res = intPropertyTemplate.replaceAll("Currency", traitName).replaceAll("currency", propName)
+    val res = String.format(intPropertyTemplate.replaceAll("Currency", traitName).replaceAll("currency", propName), getNormalizationTraitName(pname))
     res
   }
 
@@ -650,6 +665,9 @@ import edu.illinois.ncsa.daffodil.schema.annotation.props._
 import edu.illinois.ncsa.daffodil.exceptions.ThrowsSDE
 import edu.illinois.ncsa.daffodil.dsom.Found
 import edu.illinois.ncsa.daffodil.dsom.NotFound  
+import edu.illinois.ncsa.daffodil.dsom.NormalizedProperty
+import edu.illinois.ncsa.daffodil.dsom.NonNormalizedProperty
+import edu.illinois.ncsa.daffodil.dsom.NormalizedExpression
     
 """
 

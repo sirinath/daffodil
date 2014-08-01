@@ -65,7 +65,7 @@ import edu.illinois.ncsa.daffodil.dsom.oolag.OOLAG.OOLAGHost
  * the scope from the XML where it was written.
  */
 sealed abstract class PropertyLookupResult
-case class Found(value: String, location: LookupLocation) extends PropertyLookupResult
+case class Found(pname: String, value: String, location: LookupLocation) extends PropertyLookupResult
 case class NotFound(localWhereLooked: Seq[LookupLocation], defaultWhereLooked: Seq[LookupLocation]) extends PropertyLookupResult
 
 /**
@@ -183,7 +183,7 @@ trait FindPropertyMixin extends PropTypes {
    * a QName that would have to be resolved.
    */
   def getProperty(pname: String): String = {
-    val Found(res, _) = findProperty(pname)
+    val Found(_, res, _) = findProperty(pname)
     res
   }
 
@@ -204,7 +204,7 @@ trait FindPropertyMixin extends PropTypes {
   def getPropertyOption(pname: String): Option[String] = {
     val lookupRes = findPropertyOption(pname)
     val res = lookupRes match {
-      case Found(v, _) => Some(v)
+      case Found(_, v, _) => Some(v)
       case _ => None
     }
     res
@@ -215,9 +215,70 @@ trait FindPropertyMixin extends PropTypes {
    */
   def verifyPropValue(key: String, value: String): Boolean = {
     findPropertyOption(key) match {
-      case Found(`value`, _) => true
-      case Found(_, _) => false
+      case Found(_, `value`, _) => true
+      case Found(_, _, _) => false
       case NotFound(_, _) => false
     }
   }
+}
+
+trait NormalizedProperty {
+
+  /**
+   * Normalizes whitespace in the argument string by:
+   * 1: Stripping leading and trailing whitespace
+   * 2: Replacing sequences of whitespace characters with a single space
+   */
+  def normalizePropertyValue(p: Found): String = {
+    val value: String = {
+      val Found(pname, pvalue, plocation) = p
+        pvalue.replaceAll("\\s+", " ") match {
+          case " " => " "
+          case string => string.trim()
+        }
+    }
+
+    if (value != p.value) p.location.SDW("Property %s: value is not normalized.", p.pname)
+    value
+  }
+
+  def normalizeFoundProperty(p: Found): Found = Found(p.pname, normalizePropertyValue(p), p.location)
+}
+
+trait NonNormalizedProperty {
+  def normalizePropertyValue(p: Found): String = {
+    val Found(pname, pvalue, plocation) = p
+    pvalue
+  }
+}
+
+trait NormalizedExpression {
+
+  /**
+   * Whether a string is a DFDL expression (an XPath expression surrounded by brackets).
+   *
+   * This function does not verify a string conforms to the DFDL subset of XPath
+   */
+  def isExpression(expression: String): Boolean =
+    expression.startsWith("{") && expression.endsWith("}") &&
+      (expression(1) != '{')
+
+  def normalizePropertyValue(p: Found): String = {
+    val Found(pname, pvalue, plocation) = p
+    val value: String = {
+      val trimValue = pvalue.trim()
+      if (!isExpression(trimValue)) {
+        trimValue.replaceAll("\\s+", " ") match {
+          case " " => " "
+          case string => string.trim()
+        }
+      } else
+        trimValue
+    }
+
+    if (value != pvalue) p.location.SDW("Property %s: value is not normalized.", pname)
+    value
+  }
+
+  def normalizeFoundProperty(p: Found): Found = Found(p.pname, normalizePropertyValue(p), p.location)
 }

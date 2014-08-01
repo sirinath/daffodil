@@ -84,7 +84,7 @@ class TestPropertyRuntime {
     with TheExamplePropMixin
     with LookupLocation {
     def findPropertyOption(pname: String) =
-      Found("left", this)
+      Found("test", "left", this)
     override val xml = <foo/>
     lazy val fileName = "file:dummy"
     lazy val properties: PropMap = Map.empty

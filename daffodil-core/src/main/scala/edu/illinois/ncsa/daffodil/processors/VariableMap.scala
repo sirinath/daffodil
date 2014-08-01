@@ -156,7 +156,7 @@ object VariableFactory {
     val typeSym = doc.expressionCompiler.convertTypeString(extType)
 
     val defaultValExpr = defaultValue.map { e =>
-      doc.expressionCompiler.compile(typeSym, Found(e, defv))
+      doc.expressionCompiler.compile(typeSym, Found(expandedName, e, defv))
     }
 
     val defaultVal = defaultValExpr.map { ce => VariableUtil.convert(ce.constantAsString, defv) }

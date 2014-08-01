@@ -101,8 +101,8 @@ class TestGeneratedProperties {
           // XML library lets your code be the one doing the DTD resolving, so they can't do it for you.
           //
           nodeseq match {
-            case Nil => Found("", this) // we want to hand back the empty string as a value.
-            case _ => Found(nodeseq.toString, this)
+            case Nil => Found(pname, "", this) // we want to hand back the empty string as a value.
+            case _ => Found(pname, nodeseq.toString, this)
           }
         }
       }

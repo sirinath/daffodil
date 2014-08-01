@@ -48,6 +48,8 @@ import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.Representation
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.RepresentationMixin
 import edu.illinois.ncsa.daffodil.dsom.oolag.OOLAG.OOLAGHost
 import edu.illinois.ncsa.daffodil.dsom.SchemaComponentBase
+import edu.illinois.ncsa.daffodil.dsom.Found
+import edu.illinois.ncsa.daffodil.dsom.NormalizedProperty
 
 /**
  * We don't want to make the code generator so sophisticated as to be
@@ -57,14 +59,15 @@ import edu.illinois.ncsa.daffodil.dsom.SchemaComponentBase
  */
 
 sealed trait AlignmentType extends AlignmentType.Value
-object AlignmentType extends Enum[AlignmentType] { // Note: Was using AlignmentUnits mixin here!
+object AlignmentType extends Enum[AlignmentType] with NormalizedProperty { // Note: Was using AlignmentUnits mixin here!
   case object Implicit extends AlignmentType
   val allowedAlignmentValues = {
     val ints = 0 to 30 // that's every perfect power of 2 that fits in an Int.
     ints.map(1 << _)
   }
 
-  def apply(str: String, self: ThrowsSDE): Any = { // any because it can be an Int, or "implicit"
+  def apply(prop: Found, self: ThrowsSDE): Any = { // any because it can be an Int, or "implicit"
+    val str = this.normalizePropertyValue(prop)
     if (str == "implicit") return Implicit
     val i =
       try {
@@ -92,8 +95,9 @@ object FillByteType {
   def apply(str: String): String = str
 }
 
-object TextNumberBase {
-  def apply(str: String, self: ThrowsSDE): Int = {
+object TextNumberBase extends NormalizedProperty{
+  def apply(prop: Found, self: ThrowsSDE): Int = {
+    val str = this.normalizePropertyValue(prop)
     str match {
       case "2" => 2
       case "8" => 8

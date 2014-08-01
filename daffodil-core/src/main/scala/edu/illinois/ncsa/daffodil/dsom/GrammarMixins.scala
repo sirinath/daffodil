@@ -122,8 +122,8 @@ trait EscapeSchemeRefMixin extends GrammarMixin { self: AnnotatedSchemaComponent
         SDW("Property escapeSchemeRef was undefined. Please add escapeSchemeRef='' to your schema.")
         None
       }
-      case Found("", _) => None // empty string means no escape scheme
-      case Found(qName, loc) => {
+      case Found(_, "", _) => None // empty string means no escape scheme
+      case Found(_, qName, loc) => {
         val (nsURI, name) = loc.resolveQName(qName) // loc is where we resolve the QName prefix.
         val defES = schemaSet.getDefineEscapeScheme(nsURI, name)
         defES match {
@@ -645,12 +645,12 @@ trait ElementBaseGrammarMixin
 
   lazy val staticBinaryFloatRep = {
     subset(binaryFloatRep.isConstant, "Dynamic binaryFloatRep is not supported.")
-    BinaryFloatRep(binaryFloatRep.constantAsString, this)
+    BinaryFloatRep(Found("binaryFloatRep", binaryFloatRep.constantAsString, this), this)
   }
 
   lazy val binary = {
     subset(lengthKind == LengthKind.Explicit, "Currently only lengthKind='explicit' is supported.")
-    LengthKind(lengthKind.toString(), this)
+    LengthKind(Found("lengthKind", lengthKind.toString(), this), this)
   }
 
   val bin = BinaryNumberRep.Binary // shorthands for table dispatch
@@ -1123,9 +1123,13 @@ trait LocalElementGrammarMixin { self: LocalElementBase =>
   })
 }
 
-trait ElementDeclGrammarMixin { self: ElementBase with ElementDeclMixin =>
+trait ElementDeclGrammarMixin extends NormalizedExpression
+{ self: ElementBase with ElementDeclMixin =>
 
-  override lazy val inputValueCalcOption = findPropertyOption("inputValueCalc")
+  override lazy val inputValueCalcOption = findPropertyOption("inputValueCalc") match {
+    case p: Found => this.normalizeFoundProperty(p)
+    case p: NotFound => p
+  }
 
 }
 

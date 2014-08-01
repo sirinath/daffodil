@@ -207,7 +207,7 @@
   </xsd:attributeGroup>
 
   <!-- Text number format attributes -->
-  <xsd:attribute name="textNumberPattern" type="dfdl:DFDLStringLiteral" />
+  <xsd:attribute name="textNumberPattern" type="dfdl:NonNormalizedDFDLStringLiteral" />
   <xsd:attribute name="textStandardGroupingSeparator"
     type="dfdl:DFDLStringLiteral_Or_DFDLExpression" />
   <xsd:attribute name="textStandardDecimalSeparator"
@@ -224,7 +224,7 @@
   <xsd:attribute name="textStandardZeroRep" type="dfdl:ListOfDFDLStringLiteral" />
 
   <xsd:attributeGroup name="TextNumberFormatAG">
-    <xsd:attribute name="textNumberPattern" type="dfdl:DFDLStringLiteral" />
+    <xsd:attribute name="textNumberPattern" type="dfdl:NonNormalizedDFDLStringLiteral" />
     <xsd:attribute name="textStandardGroupingSeparator"
       type="dfdl:DFDLStringLiteral_Or_DFDLExpression" />
     <xsd:attribute name="textStandardDecimalSeparator"
@@ -292,7 +292,7 @@
   </xsd:attributeGroup>
 
   <!-- 13.10 Properties Specific to Calendar Format -->
-  <xsd:attribute name="calendarPattern" type="dfdl:DFDLStringLiteral" />
+  <xsd:attribute name="calendarPattern" type="dfdl:NonNormalizedDFDLStringLiteral" />
   <xsd:attribute name="calendarPatternKind" type="dfdl:CalendarPatternKindEnum" />
   <xsd:attribute name="calendarCheckPolicy" type="dfdl:CalendarCheckPolicyEnum" />
   <xsd:attribute name="calendarTimeZone" type="dfdl:CalendarTimeZoneType" />
@@ -303,7 +303,7 @@
   <xsd:attribute name="calendarLanguage" type="dfdl:CalendarLanguageType" />
 
   <xsd:attributeGroup name="CalendarFormatAG">
-    <xsd:attribute name="calendarPattern" type="dfdl:DFDLStringLiteral" />
+    <xsd:attribute name="calendarPattern" type="dfdl:NonNormalizedDFDLStringLiteral" />
     <xsd:attribute name="calendarPatternKind" type="dfdl:CalendarPatternKindEnum" />
     <xsd:attribute name="calendarCheckPolicy" type="dfdl:CalendarCheckPolicyEnum" />
     <xsd:attribute name="calendarTimeZone" type="dfdl:CalendarTimeZoneType" />
@@ -727,7 +727,7 @@
 
   <xsd:attributeGroup name="TextNumberFormatAGQualified">
     <xsd:attribute form="qualified" name="textNumberPattern"
-      type="dfdl:DFDLStringLiteral" />
+      type="dfdl:NonNormalizedDFDLStringLiteral" />
     <xsd:attribute form="qualified" name="textStandardGroupingSeparator"
       type="dfdl:DFDLStringLiteral_Or_DFDLExpression" />
     <xsd:attribute form="qualified" name="textStandardDecimalSeparator"
@@ -798,7 +798,7 @@
 
   <xsd:attributeGroup name="CalendarFormatAGQualified">
     <xsd:attribute form="qualified" name="calendarPattern"
-      type="dfdl:DFDLStringLiteral" />
+      type="dfdl:NonNormalizedDFDLStringLiteral" />
     <xsd:attribute form="qualified" name="calendarPatternKind"
       type="dfdl:CalendarPatternKindEnum" />
     <xsd:attribute form="qualified" name="calendarCheckPolicy"

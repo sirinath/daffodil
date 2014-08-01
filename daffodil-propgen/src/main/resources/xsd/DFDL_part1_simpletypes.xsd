@@ -73,6 +73,14 @@
     </xsd:restriction>
   </xsd:simpleType>
 
+  <!--  This type is a marker for the Daffodil code generator.
+        It is used to indicate that a DFDLStringLiteral should not be normalized
+        and that any whitespace is significant -->
+  <xsd:simpleType name="NonNormalizedDFDLStringLiteral">
+    <xsd:restriction base="xsd:string">
+    </xsd:restriction>
+  </xsd:simpleType>
+
   <xsd:simpleType name="ListOfDFDLStringLiteral">
     <xsd:list itemType="xsd:token" />
   </xsd:simpleType>

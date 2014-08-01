@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tdml:testSuite suiteName="NormalizeTests" description="Section 6 - Entities"
+	xmlns:tdml="http://www.ibm.com/xmlns/dfdl/testData" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:dfdl="http://www.ogf.org/dfdl/dfdl-1.0/" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:ct="http://w3.ibm.com/xmlns/dfdl/ctInfoset" xmlns:ex="http://example.com"
+	xmlns:tns="http://example.com">
+
+	<tdml:defineSchema name="normalize_01.dfdl.xsd">
+
+		<dfdl:format ref="ex:daffodilTest1" encoding="utf-8"
+			byteOrder="bigEndian" representation="text" lengthUnits="characters"
+			textNumberRep="standard" lengthKind="delimited" initiator=""
+			ignoreCase="no" initiatedContent="no" />
+
+		<xs:element name="sep_01" dfdl:terminator="">
+			<xs:complexType>
+				<xs:sequence dfdl:separator=",  %SP;"
+					dfdl:separatorPosition="infix" dfdl:terminator="">
+					<xs:element name="e1" type="xs:int" dfdl:terminator="" />
+					<xs:element name="e2" type="xs:int" dfdl:terminator="" />
+					<xs:element name="e3" type="xs:int" dfdl:terminator="" />
+				</xs:sequence>
+			</xs:complexType>
+		</xs:element>
+
+	</tdml:defineSchema>
+
+	<tdml:parserTestCase name="separator_01"
+		description="Test whitespace normalization of separator" model="normalize_01.dfdl.xsd"
+		root="sep_01">
+		<tdml:document>
+			<tdml:documentPart replaceDFDLEntities="false"
+				type="text">98,53 100</tdml:documentPart>
+		</tdml:document>
+		<tdml:infoset>
+			<tdml:dfdlInfoset>
+				<sep_01>
+					<e1>98</e1>
+					<e2>53</e2>
+					<e3>100</e3>
+				</sep_01>
+			</tdml:dfdlInfoset>
+
+		</tdml:infoset>
+	</tdml:parserTestCase>
+
+	<tdml:defineSchema name="normalize_02.dfdl.xsd">
+		<dfdl:format ref="ex:daffodilTest1" initiator=""
+			terminator="" separator="" encoding="utf-8" ignoreCase="no"
+			representation="text" lengthUnits="characters" textNumberRep="standard" />
+
+		<xs:element name="len_01">
+			<xs:complexType>
+				<xs:sequence>
+					<xs:element name="len" type="xs:int" dfdl:lengthKind="explicit"
+						dfdl:length="1" />
+					<xs:element name="num" type="xs:int" dfdl:lengthKind="explicit"
+						dfdl:length="   {     ../ex:len     }   " />
+				</xs:sequence>
+			</xs:complexType>
+		</xs:element>
+	</tdml:defineSchema>
+
+	<tdml:parserTestCase name="length_01"
+		root="len_01" model="normalize_02.dfdl.xsd"
+		description="Test whitespace normalization of length expression">
+
+		<tdml:document>512345</tdml:document>
+		<tdml:infoset>
+			<tdml:dfdlInfoset>
+				<len_01>
+					<len>5</len>
+					<num>12345</num>
+				</len_01>
+			</tdml:dfdlInfoset>
+		</tdml:infoset>
+	</tdml:parserTestCase>
+</tdml:testSuite>

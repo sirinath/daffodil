@@ -387,7 +387,7 @@ class DFDLPathExpressionCompiler(context: SchemaComponent) extends DebugRegexPar
         val ces = paths.getPathExpressions.map { p =>
           {
             val exp = "{ " + p.toString + " }"
-            val f = Found(exp, context)
+            val f = Found(p.str, exp, context)
             val ce = expressionCompiler.compile(ConvertToType.String, f)
             ce
           }

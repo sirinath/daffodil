@@ -88,7 +88,7 @@ trait LeafPropProvider
     log(LogLevel.Debug, "%s leafFindProperty %s on %s", prettyName, pname, this)
     val mine = justThisOneProperties.get(pname)
     val res = mine match {
-      case Some((value, loc)) => Found(value, loc)
+      case Some((value, loc)) => Found(pname, value, loc)
       case None => NotFound(List(this), Nil)
     }
     log(LogLevel.Debug, "%s leafFindProperty %s ", prettyName, res)
@@ -129,7 +129,7 @@ class ChainPropProvider(leafProvidersArg: Seq[LeafPropProvider], forAnnotation: 
       for { source <- sources } yield {
         val res = source.leafFindProperty(pname)
         res match {
-          case Found(_, _) => return res //found it! return right now.
+          case Found(_, _, _) => return res //found it! return right now.
           case nf @ NotFound(_, _) => nf
         }
       }
@@ -230,7 +230,7 @@ trait OverlapCheckMixin {
         case (propName, (_, aLoc)) =>
           b.chainFindProperty(propName) match {
             case _: NotFound => // ok
-            case Found(_, bLoc) => {
+            case Found(_, _, bLoc) => {
               schemaDefinitionErrorButContinue(
                 "Overlapping properties: %1$s overlaps between %2$s and %3$s. Overlap is not allowed.",
                 propName, aLoc, bLoc)

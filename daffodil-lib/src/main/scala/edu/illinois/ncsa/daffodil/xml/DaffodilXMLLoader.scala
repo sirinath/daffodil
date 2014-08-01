@@ -499,6 +499,9 @@ trait SchemaAwareLoaderMixin {
       f.setFeature("http://apache.org/xml/features/validation/schema-full-checking", true)
       //      f.setValidating(true) // old style API? 
     }
+
+    f.setFeature("http://apache.org/xml/features/validation/schema/normalized-value", false)
+
     val parser = f.newSAXParser()
     val xr = parser.getXMLReader()
     xr.setContentHandler(this)

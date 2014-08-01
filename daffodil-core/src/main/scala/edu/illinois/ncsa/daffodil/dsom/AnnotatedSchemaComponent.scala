@@ -98,7 +98,7 @@ abstract class AnnotatedSchemaComponent(xml: Node, sc: SchemaComponent)
     val seq = sources.map { _.chainFindProperty(pname) }
     val optFound = seq.collectFirst { case found: Found => found }
     val result = optFound match {
-      case Some(f @ Found(_, _)) => f
+      case Some(f @ Found(_, _, _)) => f
       case None => {
         // merge all the NotFound stuff.
         val nonDefaults = seq.flatMap {

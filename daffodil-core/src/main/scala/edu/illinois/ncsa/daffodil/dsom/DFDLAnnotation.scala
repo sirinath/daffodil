@@ -487,8 +487,8 @@ class DFDLEscapeScheme(node: Node, decl: AnnotatedSchemaComponent)
         // XML library lets your code be the one doing the DTD resolving, so they can't do it for you.
         //
         nodeseq match {
-          case Nil => Found("", this) // we want to hand back the empty string as a value.
-          case _ => Found(nodeseq.toString, this)
+          case Nil => Found(pname, "", this) // we want to hand back the empty string as a value.
+          case _ => Found(pname, nodeseq.toString, this)
         }
       }
     }
@@ -496,15 +496,15 @@ class DFDLEscapeScheme(node: Node, decl: AnnotatedSchemaComponent)
 
   lazy val optionEscapeCharacter = {
     escapeCharacterRaw match {
-      case Found("", loc) => None
-      case Found(v, loc) => Some(decl.expressionCompiler.compile(ConvertToType.String, escapeCharacterRaw))
+      case Found(_, "", loc) => None
+      case Found(_, v, loc) => Some(decl.expressionCompiler.compile(ConvertToType.String, escapeCharacterRaw))
     }
   }
 
   lazy val optionEscapeEscapeCharacter = {
     escapeEscapeCharacterRaw match {
-      case Found("", loc) => None
-      case Found(v, loc) => Some(decl.expressionCompiler.compile(ConvertToType.String, escapeEscapeCharacterRaw))
+      case Found(_, "", loc) => None
+      case Found(_, v, loc) => Some(decl.expressionCompiler.compile(ConvertToType.String, escapeEscapeCharacterRaw))
     }
   }
 
@@ -576,7 +576,7 @@ abstract class DFDLAssertionBase(node: Node, decl: AnnotatedSchemaComponent)
 
   private lazy val testPattern = getAttributeOption("testPattern")
   lazy val testKind = getAttributeOption("testKind") match {
-    case Some(str) => TestKind(str, decl)
+    case Some(str) => TestKind(Found("testKind", str, this.context), decl)
     case None => TestKind.Expression
   }
 

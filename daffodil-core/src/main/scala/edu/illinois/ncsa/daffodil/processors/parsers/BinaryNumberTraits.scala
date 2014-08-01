@@ -6,6 +6,7 @@ import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.LengthUnits
 import edu.illinois.ncsa.daffodil.dsom.ElementBase
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.ByteOrder
 import edu.illinois.ncsa.daffodil.dsom.CompiledExpression
+import edu.illinois.ncsa.daffodil.dsom.Found
 
 trait HasRuntimeExplicitLength[T] { self: BinaryNumberBaseParser[T] =>
   def e: ElementBase
@@ -38,7 +39,7 @@ trait HasRuntimeExplicitByteOrder[T] { self: BinaryNumberBaseParser[T] =>
 
   def getByteOrder(s: PState): (PState, java.nio.ByteOrder) = {
     val R(byteOrderAsAny, newVMap) = bo.evaluate(s.parentElement, s.variableMap, s)
-    val dfdlByteOrderEnum = ByteOrder(byteOrderAsAny.toString, s)
+    val dfdlByteOrderEnum = ByteOrder(Found("byteOrder", byteOrderAsAny.toString, self.context), s)
     val byteOrder = dfdlByteOrderEnum match {
       case ByteOrder.BigEndian => java.nio.ByteOrder.BIG_ENDIAN
       case ByteOrder.LittleEndian => java.nio.ByteOrder.LITTLE_ENDIAN
