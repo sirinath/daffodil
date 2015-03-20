@@ -76,8 +76,11 @@ import edu.illinois.ncsa.daffodil.processors.unparsers.UState
 import edu.illinois.ncsa.daffodil.processors.unparsers.GeneralOutStream
 import edu.illinois.ncsa.daffodil.processors.unparsers.InfosetSource
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.BitOrder
-import edu.illinois.ncsa.daffodil.xml.scalaLib.PrettyPrinter
+import edu.illinois.ncsa.daffodil.xml.scalaLib.{ PrettyPrinter => XMLPrettyPrinter }
 import edu.illinois.ncsa.daffodil.equality._
+import edu.illinois.ncsa.daffodil.xml.ToJSON
+import spray.json._
+import spray.json.DefaultJsonProtocol._
 
 /**
  * Implementation mixin - provides simple helper methods
@@ -311,16 +314,35 @@ class DataProcessor(val ssrd: SchemaSetRuntimeData)
 
 abstract class ParseResult(dp: DataProcessor)
   extends DFDL.ParseResult
-  with WithDiagnosticsImpl {
+  with WithDiagnosticsImpl with ToJSON {
 
-  def toWriter(writer: java.io.Writer) = {
+  override def resultJson: spray.json.JsValue = {
+    val xml = result
+    val json = xml.toJson
+    json
+  }
+
+  def toWriter(writer: java.io.Writer, resFormat: DFDL.ResultFormat = DFDL.XMLResult) = {
+    resFormat match {
+      case DFDL.XMLResult => toWriterXML(writer)
+      case DFDL.JSONResult => toWriterJSON(writer)
+    }
+  }
+
+  private def toWriterJSON(writer: java.io.Writer) = {
+    resultState.infoset.toWriter(writer, true, resFormat = DFDL.JSONResult)
+    writer.write("\n")
+    writer.flush()
+  }
+
+  private def toWriterXML(writer: java.io.Writer) = {
     if (resultState.infoset.totalElementCount < 200) { // TODO: make settable?
       // pretty print small infosets
-      val pp = new PrettyPrinter(80, 2)
+      val pp = new XMLPrettyPrinter(80, 2)
       writer.write(pp.format(resultState.infoset.toXML()(0)))
     } else {
       // direct write for larger infosets
-      resultState.infoset.toWriter(writer)
+      resultState.infoset.toWriter(writer, true, resFormat = DFDL.XMLResult)
     }
     writer.write("\n")
     writer.flush()

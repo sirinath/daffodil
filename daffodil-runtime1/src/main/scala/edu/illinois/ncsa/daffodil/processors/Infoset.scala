@@ -40,6 +40,7 @@ import edu.illinois.ncsa.daffodil.util.Maybe
 import edu.illinois.ncsa.daffodil.util.Maybe._
 import edu.illinois.ncsa.daffodil.xml.NS
 import edu.illinois.ncsa.daffodil.dsom.DPathElementCompileInfo
+import edu.illinois.ncsa.daffodil.api.DFDL
 
 /**
  * Saved for backtracking. Used to restore to prior Infoset element content.
@@ -138,7 +139,7 @@ trait InfosetDocument extends InfosetItem {
 trait InfosetItem {
   override def toString = toXML().toString
   def toXML(removeHidden: Boolean = true): scala.xml.NodeSeq
-  def toWriter(writer: java.io.Writer, removeHidden: Boolean = true): Unit
+  def toWriter(writer: java.io.Writer, removeHidden: Boolean = true, resFormat: DFDL.ResultFormat = DFDL.XMLResult): Unit
 
   /**
    * The totalElementCount is the total count of how many elements this InfosetItem contains.

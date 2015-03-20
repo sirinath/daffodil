@@ -56,12 +56,40 @@ import edu.illinois.ncsa.daffodil.dpath.NodeInfo
 import edu.illinois.ncsa.daffodil.dsom.ImplementsThrowsSDE
 import edu.illinois.ncsa.daffodil.xml.NoNamespace
 import edu.illinois.ncsa.daffodil.dpath.NodeInfo.PrimType
+import edu.illinois.ncsa.daffodil.api.DFDL
+import edu.illinois.ncsa.daffodil.xml.ToJSON
 
-sealed trait DINode {
+import spray.json._
+import spray.json.DefaultJsonProtocol._
+
+sealed trait DINode extends ToJSON {
+
   def toXML(removeHidden: Boolean = true): scala.xml.NodeSeq
+
+  final def toJSON(removeHidden: Boolean = true): JsValue = {
+    val json: JsValue = NodeFormat.write(toXML(removeHidden).asInstanceOf[scala.xml.Node])
+    json
+  }
+
   def asSimple: DISimple = this.asInstanceOf[DISimple]
   def children: Stream[DINode]
-  def toWriter(writer: java.io.Writer, removeHidden: Boolean = true): Unit
+
+  final def toWriter(writer: java.io.Writer, removeHidden: Boolean = true,
+    resFormat: DFDL.ResultFormat = DFDL.XMLResult): Unit = {
+    resFormat match {
+      case DFDL.XMLResult => toWriterXML(writer, removeHidden)
+      case DFDL.JSONResult => toWriterJSON(writer, removeHidden)
+    }
+  }
+
+  def toWriterXML(writer: java.io.Writer, removeHidden: Boolean = true): Unit
+
+  private final def toWriterJSON(writer: java.io.Writer, removeHidden: Boolean) {
+    val xml = toXML(removeHidden)
+    val json = xml.toSeq.toJson
+    writer.write(json.prettyPrint)
+  }
+
   def totalElementCount: Long
 }
 
@@ -129,7 +157,7 @@ final class FakeDINode extends DISimple(null) {
  * Base for non-array elements. That is either scalar or optional (
  * minOccurs 0, maxOccurs 1)
  */
-sealed trait DIElement extends DINode with InfosetElement {
+sealed trait DIElement extends InfosetElement with DINode {
   protected def erd: ElementRuntimeData
   override final def name: String = erd.name
   override final def namespace: NS = erd.targetNamespace
@@ -180,7 +208,7 @@ sealed trait DIElement extends DINode with InfosetElement {
 
   protected def writeContents(writer: java.io.Writer, removeHidden: Boolean): Unit
 
-  override final def toWriter(writer: java.io.Writer, removeHidden: Boolean = true) {
+  override final def toWriterXML(writer: java.io.Writer, removeHidden: Boolean = true) {
     if (isHidden && removeHidden) return
     if (erd.nilledXML.isDefined && isNilled) {
       scala.xml.XML.write(writer, erd.nilledXML.get, "unused", false, null)
@@ -233,8 +261,8 @@ final class DIArray(name: String, namespace: NS, val parent: DIComplex) extends 
     _contents.flatMap { _.toXML(removeHidden) }
   }
 
-  final def toWriter(writer: java.io.Writer, removeHidden: Boolean = true) {
-    _contents.foreach { _.toWriter(writer, removeHidden) }
+  override final def toWriterXML(writer: java.io.Writer, removeHidden: Boolean = true) {
+    _contents.foreach { _.asInstanceOf[DIElement].toWriterXML(writer, removeHidden) }
   }
 
   final def totalElementCount: Long = {
@@ -615,7 +643,7 @@ sealed class DIComplex(val erd: ElementRuntimeData)
   }
 
   override def writeContents(writer: java.io.Writer, removeHidden: Boolean) {
-    _slots.foreach { _ foreach { slot => slot.toWriter(writer, removeHidden) } }
+    _slots.foreach { _ foreach { slot => slot.toWriterXML(writer, removeHidden) } }
   }
 
   override def totalElementCount: Long = {

@@ -187,12 +187,17 @@ object DFDL {
     def parse(file: File): ParseResult
   }
 
+  sealed trait ResultFormat
+  case object XMLResult extends ResultFormat
+  case object JSONResult extends ResultFormat
+
   trait ParseResult extends Result with WithDiagnostics {
     /**
      * Writes XML version of result infoset to the writer
      */
-    def toWriter(writer: java.io.Writer): Unit
+    def toWriter(writer: java.io.Writer, format: ResultFormat = XMLResult): Unit
     def result: scala.xml.Node
+    def resultJson: spray.json.JsValue
     def briefResult = XMLUtils.removeAttributes(result)
     def resultState: State
     def isValidationSuccess: Boolean

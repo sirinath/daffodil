@@ -57,12 +57,11 @@ import edu.illinois.ncsa.daffodil.util.LoggingDefaults
 import edu.illinois.ncsa.daffodil.exceptions.NotYetImplementedException
 import java.io.File
 import edu.illinois.ncsa.daffodil.tdml.DFDLTestSuite
-import edu.illinois.ncsa.daffodil.api.ValidationMode
+import edu.illinois.ncsa.daffodil.api._
 import scala.xml.Node
 import edu.illinois.ncsa.daffodil.externalvars.Binding
 import edu.illinois.ncsa.daffodil.externalvars.ExternalVariablesLoader
 import edu.illinois.ncsa.daffodil.configuration.ConfigurationLoader
-import edu.illinois.ncsa.daffodil.api.ValidationMode
 import scala.language.reflectiveCalls
 import scala.concurrent.Future
 import java.util.concurrent.Executors
@@ -270,6 +269,7 @@ class CLIConf(arguments: Array[String]) extends scallop.ScallopConf(arguments)
               |                      [--validate [mode]]
               |                      [-D[{namespace}]<variable>=<value>...] [-o <output>]
               |                      [-c <file>] [infile]
+              |                      [-k]
               |
               |Parse a file, using either a DFDL schema or a saved parser
               |
@@ -283,6 +283,8 @@ class CLIConf(arguments: Array[String]) extends scallop.ScallopConf(arguments)
     val path = opt[String](argName = "path", descr = "path to the node to create parser.")
     val parser = opt[File](short = 'P', argName = "file", descr = "use a previously saved parser.")
     val output = opt[String](argName = "file", descr = "write output to a given file. If not given or is -, output is written to stdout.")
+    val xmlOrJson = opt[String](short = 'k', argName = "kind", descr = "kind of output - xml or json.")
+
     val validate: ScallopOption[ValidationMode.Type] = opt[ValidationMode.Type](short = 'V', default = Some(ValidationMode.Off), argName = "mode", descr = "the validation mode. 'on', 'limited' or 'off'. Defaults to 'on' if mode is not supplied.")(optionalValueConverter[ValidationMode.Type](a => validateConverter(a)).map {
       case None => ValidationMode.Full
       case Some(mode) => mode
@@ -306,6 +308,12 @@ class CLIConf(arguments: Array[String]) extends scallop.ScallopConf(arguments)
 
     validateOpt(parser, validate) {
       case (Some(_), Some(v)) if v == ValidationMode.Full => Left("The validation mode 'Full' is invalid when using a saved parser.")
+      case _ => Right(Unit)
+    }
+
+    validateOpt(xmlOrJson) {
+      case Some(s) if (s.toLowerCase == "xml") => Right(Unit)
+      case Some(s) if (s.toLowerCase == "json") => Right(Unit)
       case _ => Right(Unit)
     }
   }
@@ -715,7 +723,12 @@ object Main extends Logging {
               }
               val writer: BufferedWriter = new BufferedWriter(new OutputStreamWriter(output));
 
-              Timer.getResult("writing", parseResult.toWriter(writer))
+              val kind = parseOpts.xmlOrJson.get.map { _.toLowerCase } match {
+                case None | Some("xml") => DFDL.XMLResult
+                case Some("json") => DFDL.JSONResult
+                case _ => Assert.invariantFailed("kind option (k) wasn't valid")
+              }
+              Timer.getResult("writing", parseResult.toWriter(writer, kind))
               if (hasLeftOverData) 1 else 0
             }
           }
