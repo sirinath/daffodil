@@ -800,19 +800,7 @@ object Main extends Logging {
               val index = n % dataSeq.length
               val (path, data, dataLen) = dataSeq(index)
               val newArr: Array[Byte] = data.clone()
-              val inData = performanceOpts.unparse() match {
-                case true => {
-                  val input = Source.fromBytes(data)
-                  val xmlEventReader = new XMLEventReader(input)
-                  Left(xmlEventReader)
-                }
-                case false => {
-                  val bais: ByteArrayInputStream = new ByteArrayInputStream(newArr)
-                  val channel = java.nio.channels.Channels.newChannel(bais);
-                  Right(channel)
-                }
-              }
-              (path, inData, dataLen)
+              (path, newArr, dataLen)
             }
             val inputsWithIndex = inputs.zipWithIndex
 
@@ -837,12 +825,19 @@ object Main extends Logging {
               val tasks = inputsWithIndex.map {
                 case (c, n) =>
                   val task: Future[(Int, Long, Boolean)] = Future {
-                    val (path, inData, len) = c
-                    val (time, result) = inData match {
-                      case Left(xmlData) => Timer.getTimeResult({ processor.unparse(nullChannelForUnparse, xmlData) })
-                      case Right(channel) => Timer.getTimeResult({ processor.parse(channel, len) })
+                    val (path, data, len) = c
+                    val (time, result) = performanceOpts.unparse() match {
+                      case true => {
+                        val input = Source.fromBytes(data)
+                        val xmlEventReader = new XMLEventReader(input)
+                        Timer.getTimeResult({ processor.unparse(nullChannelForUnparse, xmlEventReader) })
+                      }
+                      case false => {
+                        val bais = new ByteArrayInputStream(data)
+                        val channel = java.nio.channels.Channels.newChannel(bais);
+                        Timer.getTimeResult({ processor.parse(channel, len) })
+                      }
                     }
-
                     (n, time, result.isError)
                   }
                   task
