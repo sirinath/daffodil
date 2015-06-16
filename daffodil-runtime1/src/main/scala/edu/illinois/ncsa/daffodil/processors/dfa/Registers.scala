@@ -1,6 +1,7 @@
 package edu.illinois.ncsa.daffodil.processors.dfa
 
 import edu.illinois.ncsa.daffodil.processors.DFDLCharReader
+import edu.illinois.ncsa.daffodil.exceptions.Assert
 
 // This is the block of mutable things
 // including the source of characters.
@@ -11,7 +12,7 @@ class Registers(val delimiters: Seq[DFADelimiter]) extends Serializable {
   // is too inefficient. (It allocates).
   // We really just need a 
   // get next char function.
-  private var reader: DFDLCharReader = null;
+  var reader: DFDLCharReader = null;
 
   var numCharsRead: Int = 0
   var numCharsReadUntilDelim: Int = 0
@@ -30,6 +31,7 @@ class Registers(val delimiters: Seq[DFADelimiter]) extends Serializable {
    * reset() is also init().
    */
   def reset(reader: DFDLCharReader, matchStartPos: Int) {
+    Assert.invariant(matchStartPos == 0) // seems to always be the case.
     Registers.this.reader = reader
     data0 = nextChar()
     data1 = nextChar()
@@ -62,7 +64,7 @@ class Registers(val delimiters: Seq[DFADelimiter]) extends Serializable {
    * left off.
    */
   def copy(that: Registers) {
-    Registers.this.reader = that.reader
+    Registers.this.reader = that.reader.copy
     Registers.this.data0 = that.data0
     Registers.this.data1 = that.data1
     Registers.this.matchStartPos = that.numCharsReadUntilDelim
@@ -75,10 +77,10 @@ class Registers(val delimiters: Seq[DFADelimiter]) extends Serializable {
 
   def getReader: DFDLCharReader = reader
 
-  // returns -1 for EOF (or maybe 26.toChar aka ^Z)
+  // returns -1 for EOF
   def nextChar() = {
     val res = reader.first
-    reader = reader.rest
+    if (res != -1.toChar) reader = reader.rest
     res
   }
 

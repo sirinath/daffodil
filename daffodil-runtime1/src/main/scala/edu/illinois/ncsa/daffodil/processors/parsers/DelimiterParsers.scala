@@ -137,7 +137,8 @@ abstract class DelimiterTextParserBase(rd: TermRuntimeData,
           }
         }.toSet.filter { x => x._4 == true }
 
-        if (findResult.size == 0) Assert.impossibleCase()
+        if (findResult.size == 0)
+          Assert.impossibleCase()
         findResult.head
       }
     (remoteDelimValue, remoteElemName, remoteElemPath)
@@ -167,6 +168,8 @@ class DelimiterTextParser(
 
     val localDelimsCooked = start.mpstate.localDelimiters.getAllDelimiters
 
+    val initialBitPos0b = start.bitPos0b
+
     val bytePos = (start.bitPos >> 3).toInt
 
     val reader = getReader(rd.encodingInfo.knownEncodingCharset.charset, start.bitPos, start)
@@ -189,7 +192,7 @@ class DelimiterTextParser(
           val endCharPos = start.charPos
           val endBitPosDelim = numBits + start.bitPos
 
-          start.setPos(endBitPosDelim, endCharPos, Some(reader.atBitPos(endBitPosDelim)))
+          start.setPos(endBitPosDelim, -1, Nope)
           start.mpstate.clearDelimitedText
           return
         } else if (hasRemoteES(start)) {
@@ -226,7 +229,7 @@ class DelimiterTextParser(
 
         val numBits = res.numBits
         val endCharPos = if (start.charPos == -1) res.numCharsRead else start.charPos + res.numCharsRead
-        val endBitPosDelim = numBits + start.bitPos
+        val endBitPosDelim = numBits + initialBitPos0b
 
         start.setPos(endBitPosDelim, endCharPos, Some(res.next))
         return
@@ -243,11 +246,10 @@ class DelimiterTextParser(
           kindString, localDelimsCooked.mkString(" "), rd.path, positionalInfo)
         return
       } else {
-        val numBits = rd.encodingInfo.knownEncodingStringBitLength(found.foundText)
-        val endCharPos = if (start.charPos == -1) found.foundText.length() else start.charPos + found.foundText.length()
-        val endBitPosDelim = numBits + start.bitPos
+        val nChars = found.foundText.length
+        val wasDelimiterTextSkipped = start.inStream.dataInputStream.skipChars(nChars)
+        Assert.invariant(wasDelimiterTextSkipped)
 
-        start.setPos(endBitPosDelim, endCharPos, Some(reader.atBitPos(endBitPosDelim)))
         start.mpstate.clearDelimitedText
       }
     }

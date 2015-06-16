@@ -51,7 +51,8 @@ class TestPrimitives {
 
       <xs:element name="e1" type="xs:string" dfdl:lengthKind="explicit" dfdl:length="{ 4 }" dfdl:initiator="abcd">
       </xs:element>)
-    val actual = TestUtils.testString(sch, "abcdefgh")
+    val areTracing = false
+    val actual = TestUtils.testString(sch, "abcdefgh", areTracing)
     assertTrue(actual.canProceed)
     val actualString = actual.result.toString
     val expected: Node = <e1>efgh</e1>
@@ -101,7 +102,8 @@ class TestPrimitives {
           </xs:sequence>
         </xs:complexType>
       </xs:element>)
-    val actual = TestUtils.testString(sch, "abcd,efgh")
+    val areTracing = false
+    val actual = TestUtils.testString(sch, "abcd,efgh", areTracing)
     val actualString = actual.result.toString
     val expected: Node = <e1><s1>abcd</s1><s2>efgh</s2></e1>
     TestUtils.assertEqualsXMLElements(expected, actual.result)
@@ -146,7 +148,8 @@ class TestPrimitives {
           </xs:sequence>
         </xs:complexType>
       </xs:element>)
-    val actual = TestUtils.testString(sch, "abcd}efgh}}}ijkl")
+    val areTracing = false
+    val actual = TestUtils.testString(sch, "abcd}efgh}}}ijkl", areTracing)
     val actualString = actual.result.toString
     val expected: Node = <e1><s1><ss1>abcd</ss1><ss2>efgh</ss2></s1><s2>ijkl</s2></e1>
     TestUtils.assertEqualsXMLElements(expected, actual.result)

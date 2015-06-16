@@ -409,7 +409,7 @@
             dfdl:lengthUnits="characters" dfdl:encoding="utf-8"/>
           <xs:element name="inner" type="xs:string"
             dfdl:lengthKind="explicit" dfdl:length="{2}"
-            dfdl:lengthUnits="characters" dfdl:encoding="utf-8"/>
+            dfdl:lengthUnits="characters" dfdl:encoding="utf-8" dfdl:encodingErrorPolicy="replace"/>
           <xs:element name="last" type="xs:string"
             dfdl:lengthKind="explicit" dfdl:length="{2}"
             dfdl:lengthUnits="characters" dfdl:encoding="utf-8"/>

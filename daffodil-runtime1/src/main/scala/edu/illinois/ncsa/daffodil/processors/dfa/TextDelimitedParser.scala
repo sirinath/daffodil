@@ -64,7 +64,7 @@ abstract class TextDelimitedParserBase(
     val successes: ArrayBuffer[(DFADelimiter, Registers)] = ArrayBuffer.empty
     val fieldReg: Registers = new Registers(delims)
 
-    fieldReg.reset(input, 0)
+    fieldReg.reset(input, 0) // Initialization
 
     val initialCharPos = input.characterPos
 
@@ -132,7 +132,7 @@ abstract class TextDelimitedParserBase(
         }
         val lookingFor = dfa.lookingFor
         val totalNumCharsRead = fieldReg.numCharsReadUntilDelim
-        val numBits: Int = context.encodingInfo.knownEncodingStringBitLength(fieldReg.charsReadUntilDelim.toString)
+        val numBits: Int = context.encodingInfo.knownEncodingStringBitLength(fieldReg.charsReadUntilDelim.toString) // FIXME: This is incorrect. unicode replacement characters can fool this
         val nextReader: DFDLCharReader = input.drop(totalNumCharsRead).asInstanceOf[DFDLCharReader]
 
         One(new ParseResult(fieldValue, delim, lookingFor, totalNumCharsRead, numBits, nextReader))

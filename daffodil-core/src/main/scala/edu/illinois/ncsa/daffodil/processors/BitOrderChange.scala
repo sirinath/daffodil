@@ -35,14 +35,32 @@ package edu.illinois.ncsa.daffodil.processors
 import edu.illinois.ncsa.daffodil.grammar.Terminal
 import edu.illinois.ncsa.daffodil.dsom.Term
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.BitOrder
+import edu.illinois.ncsa.daffodil.equality._
+import edu.illinois.ncsa.daffodil.exceptions.Assert
+import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.ByteOrder
 
 /**
  * Changes bit order to what the term specifies it is.
  */
 
 case class BitOrderChange(t: Term) extends Terminal(t, true) {
-  val bitOrder = t.defaultBitOrder
-  override lazy val parser = new BitOrderChangeParser(t.runtimeData, bitOrder)
+
+  private val littleEndian = ByteOrder.LittleEndian.toString
+
+  val bitOrder = {
+    val bitOrd = t.defaultBitOrder
+    if (t.byteOrder.isConstant) {
+      val byteOrd = t.byteOrder.constantAsString
+      bitOrd match {
+        case BitOrder.LeastSignificantBitFirst =>
+          Assert.invariant(byteOrd =:= littleEndian)
+        case BitOrder.MostSignificantBitFirst => // ok either way
+      }
+    }
+    bitOrd
+  }
+
+  override lazy val parser = new BitOrderChangeParser(t.runtimeData, bitOrder, t.byteOrder)
 
 }
 

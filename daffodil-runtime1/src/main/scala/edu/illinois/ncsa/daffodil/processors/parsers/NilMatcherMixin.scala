@@ -1,6 +1,5 @@
 package edu.illinois.ncsa.daffodil.processors.parsers
 
-import edu.illinois.ncsa.daffodil.processors.ScalaPatternParser
 import scala.collection.mutable.Queue
 import java.util.regex.Pattern
 import edu.illinois.ncsa.daffodil.processors.Delimiter
@@ -16,8 +15,7 @@ trait NilMatcherMixin {
    * Constructs an Array of String which holds the Regex representations of the
    * delimList.
    */
-  private def buildDelims(delimList: Set[String]): (Array[ScalaPatternParser], Array[String]) = {
-    var delimsParser: Queue[ScalaPatternParser] = Queue.empty
+  private def buildDelims(delimList: Set[String]): Array[String] = {
     var delimsRegex: Queue[String] = Queue.empty
 
     // We probably always want delims ordered:
@@ -26,10 +24,9 @@ trait NilMatcherMixin {
     sortDelims(delimList).toList.foreach(str => {
       val d = new Delimiter()
       d.compile(str)
-      delimsParser.enqueue(ScalaPatternParser(d.delimRegExParseDelim.r)) // The regex representing the actual delimiter
       delimsRegex.enqueue(d.delimRegExParseDelim) // The regex representing the actual delimiter
     })
-    (delimsParser.toArray, delimsRegex.toArray)
+    delimsRegex.toArray
   }
 
   private def sortDelims(delimList: Set[String]): Seq[String] = {
@@ -71,7 +68,7 @@ trait NilMatcherMixin {
   }
 
   private def getDfdlLiteralRegex(dfdlLiteralList: Set[String]): String = {
-    val (_, regex) = this.buildDelims(dfdlLiteralList)
+    val regex = this.buildDelims(dfdlLiteralList)
     combineDelimitersRegex(regex, Array.empty[String])
   }
 

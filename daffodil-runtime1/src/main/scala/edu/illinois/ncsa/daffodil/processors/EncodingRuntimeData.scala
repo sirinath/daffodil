@@ -44,6 +44,9 @@ import edu.illinois.ncsa.daffodil.dpath.NodeInfo
 import edu.illinois.ncsa.daffodil.exceptions.SchemaFileLocation
 import edu.illinois.ncsa.daffodil.exceptions.NoSchemaFileLocation
 import edu.illinois.ncsa.daffodil.util.PreSerialization
+import edu.illinois.ncsa.daffodil.processors.charset.CharsetUtils
+import java.nio.charset.CharsetEncoder
+import java.nio.charset.CharsetDecoder
 
 /**
  * To eliminate circularities between RuntimeData objects and the
@@ -174,6 +177,25 @@ final class EncodingRuntimeData(
   val isScannable: Boolean,
   override val knownEncodingAlignmentInBits: Int)
   extends KnownEncodingMixin with ImplementsThrowsSDE with PreSerialization {
+
+  private def getCharset(state: ParseOrUnparseState) = {
+    val encAsAny = encoding.evaluate(state)
+    val encString = encAsAny.asInstanceOf[String]
+    val cs = CharsetUtils.getCharset(encString)
+    cs
+  }
+
+  def getDecoder(state: ParseOrUnparseState): CharsetDecoder = {
+    val cs = getCharset(state)
+    val decoder = state.getDecoder(cs)
+    decoder
+  }
+
+  def getEncoder(state: ParseOrUnparseState): CharsetEncoder = {
+    val cs = getCharset(state)
+    val encoder = state.getEncoder(cs)
+    encoder
+  }
 
   lazy val termRuntimeData = termRuntimeDataArg
 

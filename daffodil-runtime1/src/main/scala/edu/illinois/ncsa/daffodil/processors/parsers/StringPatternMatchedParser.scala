@@ -42,53 +42,43 @@ import edu.illinois.ncsa.daffodil.util.Maybe
 import edu.illinois.ncsa.daffodil.util.Maybe._
 import edu.illinois.ncsa.daffodil.processors.TextJustificationType
 import edu.illinois.ncsa.daffodil.processors.charset.DFDLCharset
-import edu.illinois.ncsa.daffodil.processors.ScalaPatternParser
+import java.util.regex.Pattern
+import edu.illinois.ncsa.daffodil.util.OnStack
+import java.util.regex.Matcher
+import edu.illinois.ncsa.daffodil.processors.charset.CharsetUtils
 
 class StringPatternMatchedParser(patternString: String,
   erd: ElementRuntimeData,
   override val justificationTrim: TextJustificationType.Type,
   val parsingPadChar: Maybe[Char])
-  extends PrimParser(erd) with TextReader with PaddingRuntimeMixin {
+  extends PrimParser(erd) with PaddingRuntimeMixin {
 
   val eName = erd.name
 
-  private lazy val compiledPattern = ScalaPatternParser.compilePattern(patternString, erd)
+  lazy val pattern = patternString.r.pattern // imagine a really big expensive pattern to compile.
+
+  object withMatcher extends OnStack[Matcher](pattern.matcher(""))
 
   def parse(start: PState): Unit = withParseErrorThrowing(start) {
 
-    log(LogLevel.Debug, "StringPatternMatched - %s - Parsing pattern at byte position: %s", eName, (start.bitPos >> 3))
-    log(LogLevel.Debug, "StringPatternMatched - %s - Parsing pattern at bit position: %s", eName, start.bitPos)
+    val dis = start.inStream.dataInputStream
 
-    // some encodings aren't whole bytes.
-    // if (start.bitPos % 8 != 0) { return PE(start, "StringPatternMatched - not byte aligned.") }
+    val decoder = erd.encodingInfo.getDecoder(start)
+    dis.setDecoder(decoder)
 
-    val bytePos = (start.bitPos >> 3).toInt
+    withMatcher { m =>
+      val isMatch = dis.lookingAt(m)
 
-    log(LogLevel.Debug, "Retrieving reader")
-
-    val reader = getReader(erd.encodingInfo.knownEncodingCharset.charset, start.bitPos, start)
-
-    val result = ScalaPatternParser.parseInputPatterned(compiledPattern, reader)
-
-    val postState = result match {
-      case f if f.isFailure => {
+      if (!isMatch) {
         // A no match means zero length.  
         // Because we check for Nil first, this is valid and allowed.
         // Since it's zero length, the start state is the end state. 
         start.simpleElement.setDataValue("") // empty string is the value.
-        start
-      }
-      case s => {
-        val endBitPos = start.bitPos + s.numBits(erd)
-        log(LogLevel.Debug, "StringPatternMatched - Parsed: %s", s.field)
-        log(LogLevel.Debug, "StringPatternMatched - Ended at bit position %s", endBitPos)
-
-        val endCharPos = if (start.charPos == -1) s.field.length() else start.charPos + s.field.length()
-        val field = trimByJustification(s.field)
+      } else {
+        val rawField = m.group()
+        val field = trimByJustification(rawField)
         start.simpleElement.setDataValue(field)
-        start.setPos(endBitPos, endCharPos, One(s.next))
       }
-
     }
   }
 }

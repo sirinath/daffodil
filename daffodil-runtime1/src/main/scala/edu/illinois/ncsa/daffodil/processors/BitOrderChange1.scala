@@ -33,9 +33,24 @@
 package edu.illinois.ncsa.daffodil.processors
 
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.BitOrder
+import edu.illinois.ncsa.daffodil.dsom.CompiledExpression
+import edu.illinois.ncsa.daffodil.dsom.RuntimeSchemaDefinitionError
+import edu.illinois.ncsa.daffodil.equality._
 
-class BitOrderChangeParser(t: RuntimeData, bitOrder: BitOrder) extends PrimParser(t) {
+class BitOrderChangeParser(t: RuntimeData, bitOrder: BitOrder, byteOrder: CompiledExpression) extends PrimParser(t) {
   def parse(pstate: PState): Unit = {
+
+    if (!byteOrder.isConstant) {
+      val byteOrd = byteOrder.evaluate(pstate).asInstanceOf[String]
+      bitOrder match {
+        case BitOrder.MostSignificantBitFirst => // ok
+        case BitOrder.LeastSignificantBitFirst =>
+          if (byteOrd =:= "bigEndian") {
+            throw new RuntimeSchemaDefinitionError(t.schemaFileLocation, pstate,
+              "Bit order 'leastSignificantBitFirst' requires byte order 'littleEndian', but byte order was '%s'.", byteOrd)
+          }
+      }
+    }
     pstate.schemaDefinitionUnless(pstate.bitPos1b % 8 == 1, "Can only change dfdl:bitOrder on a byte boundary")
     pstate.setBitOrder(bitOrder)
   }

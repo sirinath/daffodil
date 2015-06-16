@@ -69,6 +69,11 @@ import java.io.StringReader
 import org.apache.commons.io.input.ReaderInputStream
 import edu.illinois.ncsa.daffodil.events.EventHandler
 import edu.illinois.ncsa.daffodil.processors.unparsers.UState
+import edu.illinois.ncsa.daffodil.processors.dfa.DFADelimiter
+import java.nio.charset.CharsetDecoder
+import java.nio.charset.Charset
+import scala.collection.mutable
+import java.nio.charset.CharsetEncoder
 
 case class MPState() {
 
@@ -101,8 +106,8 @@ case class MPState() {
   def popDelimiters() = delimiterStack.pop
   def localDelimiters = delimiterStack.top
   def remoteDelimiters = delimiterStack.tail
-  def getAllTerminatingMarkup = delimiterStack.iterator.flatMap { _.getTerminatingMarkup }.toSeq
-  def getAllDelimitersWithPos = delimiterStack.iterator.flatMap { _.getDelimitersWithPos }.toSeq
+  def getAllTerminatingMarkup = delimiterStack.iterator.flatMap { _.getTerminatingMarkup }.toList.toSeq // use list here because toSeq creates a lazy stream from an iterator
+  def getAllDelimitersWithPos = delimiterStack.iterator.flatMap { _.getDelimitersWithPos }.toList.toSeq
 
   var foundDelimiter: Maybe[FoundDelimiterText] = Nope
 
@@ -153,7 +158,7 @@ abstract class ParseOrUnparseState(
   // in sensible ways, etc. 
   final def bitPos = bitPos0b
   final def bytePos = bytePos0b
-  def charPos: Long
+  // def charPos: Long
 
   def groupPos: Long
   def arrayPos: Long
@@ -198,11 +203,35 @@ abstract class ParseOrUnparseState(
     val rsdw = new RuntimeSchemaDefinitionWarning(ctxt.schemaFileLocation, this, str, args: _*)
     diagnostics = rsdw :: diagnostics
   }
+
+  private val decoderCache = new mutable.HashMap[Charset, CharsetDecoder]()
+  private val encoderCache = new mutable.HashMap[Charset, CharsetEncoder]()
+
+  def getDecoder(charset: Charset): CharsetDecoder = {
+    var optDecoder = decoderCache.get(charset)
+    if (optDecoder.isEmpty) {
+      val decoder = charset.newDecoder()
+      decoderCache.put(charset, decoder)
+      optDecoder = Option(decoder)
+    }
+    optDecoder.get
+  }
+
+  def getEncoder(charset: Charset): CharsetEncoder = {
+    var optEncoder = encoderCache.get(charset)
+    if (optEncoder.isEmpty) {
+      val encoder = charset.newEncoder()
+      encoderCache.put(charset, encoder)
+      optEncoder = Option(encoder)
+    }
+    optEncoder.get
+  }
+
 }
 
 final class PState private (
   var infoset: InfosetItem,
-  var inStream: InStream,
+  @deprecated("2015-06-22", "use dataInputStream") var inStream: InStream,
   vmap: VariableMap,
   var status: ProcessorResult,
   diagnosticsArg: List[Diagnostic],
@@ -210,6 +239,8 @@ final class PState private (
   val mpstate: MPState,
   dataProcArg: DataProcessor)
   extends ParseOrUnparseState(mpstate.dstate, vmap, diagnosticsArg, dataProcArg) {
+
+  def dataInputStream = inStream.dataInputStream
 
   override def hasInfoset = true
   def thisElement = infoset.asInstanceOf[InfosetElement]
@@ -247,7 +278,7 @@ final class PState private (
   }
 
   override def toString() = {
-    "PState( bitPos=%s charPos=%s status=%s )".format(bitPos0b, charPos, status)
+    "PState( bitPos=%s status=%s )".format(bitPos0b, status)
   }
 
   def currentLocation: DataLocation =
@@ -258,7 +289,7 @@ final class PState private (
   def bitPos0b = inStream.bitPos0b
   def bitLimit0b = inStream.bitLimit0b
   def charPos = inStream.charPos0b
-  def charLimit = inStream.charLimit0b
+  //  def charLimit = inStream.charLimit0b
 
   def simpleElement: InfosetSimpleElement = {
     val res = infoset match {
@@ -443,7 +474,7 @@ object PState {
     bitLengthLimit: Long = -1): PState = {
     val bitOrder = root.defaultBitOrder
     val inStream =
-      InStream.fromByteChannel(root, input, bitOffset, bitLengthLimit, bitOrder)
+      InStreamFactory.fromByteChannel(root, input, bitOffset, bitLengthLimit, bitOrder)
     createInitialPState(root, inStream, dataProc)
   }
 

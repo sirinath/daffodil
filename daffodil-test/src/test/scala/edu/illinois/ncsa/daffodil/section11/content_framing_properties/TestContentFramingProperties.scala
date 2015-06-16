@@ -87,7 +87,8 @@ class TestContentFramingProperties {
   @Test def test_encoding_iso_8859_1() = { runner2.runOneTest("encoding_iso-8859-1") }
 
   @Test def test_encodingErrorReplace() { runner2.runOneTest("encodingErrorReplace") }
-  @Test def test_encodingNoError() { runner2.runOneTest("encodingNoError") }
+  // JIRA Ticket DFDL-1386 - 4-byte utf-8 characters/surrogate-pair issue.
+  // @Test def test_encodingNoError() { runner2.runOneTest("encodingNoError") }
   @Test def test_encodingErrorReplace2() { runner2.runOneTest("encodingErrorReplace2") }
   @Test def test_encodingErrorReplace3() { runner2.runOneTest("encodingErrorReplace3") }
   @Test def test_encodingErrorReplace4() { runner2.runOneTest("encodingErrorReplace4") }
