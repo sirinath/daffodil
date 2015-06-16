@@ -179,26 +179,11 @@ class DataProcessor(val ssrd: SchemaSetRuntimeData)
     val rootERD = ssrd.elementRuntimeData
 
     val initialState =
-      if (!areDebugging && ssrd.encodingInfo.isScannable &&
-        ssrd.encodingInfo.defaultEncodingErrorPolicy == EncodingErrorPolicy.Replace &&
-        ssrd.encodingInfo.knownEncodingIsFixedWidth &&
-        ssrd.encodingInfo.knownEncodingAlignmentInBits == 8 // byte-aligned characters
-        ) {
-        // use simpler text only I/O layer
-        val jis = Channels.newInputStream(input)
-        val inStream = InStream.forTextOnlyFixedWidthErrorReplace(
-          ssrd.elementRuntimeData,
-          jis, ssrd.encodingInfo.knownEncodingName, lengthLimitInBits)
-        PState.createInitialPState(rootERD,
-          inStream,
-          this)
-      } else {
-        PState.createInitialPState(rootERD,
-          input,
-          this,
-          bitOffset = 0,
-          bitLengthLimit = lengthLimitInBits) // TODO also want to pass here the externally set variables, other flags/settings.
-      }
+      PState.createInitialPState(rootERD,
+        input,
+        this,
+        bitOffset = 0,
+        bitLengthLimit = lengthLimitInBits) // TODO also want to pass here the externally set variables, other flags/settings.
     parse(initialState)
   }
 
@@ -206,23 +191,11 @@ class DataProcessor(val ssrd: SchemaSetRuntimeData)
     Assert.usage(!this.isError)
 
     val initialState =
-      if (!areDebugging && ssrd.encodingInfo.isScannable &&
-        ssrd.encodingInfo.defaultEncodingErrorPolicy == EncodingErrorPolicy.Replace &&
-        ssrd.encodingInfo.knownEncodingIsFixedWidth) {
-        // use simpler I/O layer
-        val inStream = InStream.forTextOnlyFixedWidthErrorReplace(
-          ssrd.elementRuntimeData,
-          file, ssrd.encodingInfo.knownEncodingName, -1)
-        PState.createInitialPState(ssrd.elementRuntimeData,
-          inStream,
-          this)
-      } else {
-        PState.createInitialPState(ssrd.elementRuntimeData,
-          FileChannel.open(file.toPath),
-          this,
-          bitOffset = 0,
-          bitLengthLimit = file.length * 8) // TODO also want to pass here the externally set variables, other flags/settings.
-      }
+      PState.createInitialPState(ssrd.elementRuntimeData,
+        FileChannel.open(file.toPath),
+        this,
+        bitOffset = 0,
+        bitLengthLimit = file.length * 8) // TODO also want to pass here the externally set variables, other flags/settings.
     parse(initialState)
   }
 

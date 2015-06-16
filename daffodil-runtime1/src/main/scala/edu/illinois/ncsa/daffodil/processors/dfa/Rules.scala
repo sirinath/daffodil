@@ -65,8 +65,10 @@ abstract class State(states: => ArrayBuffer[State]) extends Serializable {
   def run(actNum: Int, r: Registers): Either[DFAStatus, Int] = {
     var actionNum = actNum //0
     while (actionNum < rules.length) {
-      if (rules(actionNum).test(r)) {
-        val res = rules(actionNum).act(r)
+      val rule = rules(actionNum)
+      val useThisRule = rule.test(r)
+      if (useThisRule) {
+        val res = rule.act(r)
         res match {
           case Right(nextStateNum) => return Right(nextStateNum)
           case Left(status) => return Left(new DFAStatus(stateNum, actionNum, status))
@@ -177,8 +179,18 @@ class StartState(states: => ArrayBuffer[State], val stateNum: Int)
 
   val stateName: String = "StartState"
   val rules = ArrayBuffer(
-    Rule { (r: Registers) => couldBeFirstChar(r.data0, r.delimiters) } { (r: Registers) => Left(StateKind.Paused) },
-    Rule { (r: Registers) => { r.data0 == DFA.EndOfDataChar } } { (r: Registers) => Right(DFA.EndOfData) },
+    Rule { (r: Registers) =>
+      couldBeFirstChar(r.data0, r.delimiters)
+    } { (r: Registers) =>
+      Left(StateKind.Paused)
+    },
+    Rule { (r: Registers) =>
+      {
+        r.data0 == DFA.EndOfDataChar
+      }
+    } { (r: Registers) =>
+      Right(DFA.EndOfData)
+    },
     Rule { (r: Registers) => true } { (r: Registers) =>
       {
         r.appendToField(r.data0)
@@ -233,7 +245,7 @@ class StartStateEscapeChar(states: => ArrayBuffer[State], val EEC: Maybe[Char], 
   val stateName: String = "StartState"
 
   val rules_NO_EEC_BUT_EC_TERM_SAME = ArrayBuffer(
-    Rule { (r: Registers) => (r.data0 == EC.get) && couldBeFirstChar(r.data1, r.delimiters) } { (r: Registers) => Right(ECState) },  
+    Rule { (r: Registers) => (r.data0 == EC.get) && couldBeFirstChar(r.data1, r.delimiters) } { (r: Registers) => Right(ECState) },
     Rule { (r: Registers) => couldBeFirstChar(r.data0, r.delimiters) } { (r: Registers) => Left(StateKind.Paused) },
     Rule { (r: Registers) => { r.data0 == EC.get } } { (r: Registers) => Right(ECState) },
     Rule { (r: Registers) => { r.data0 == DFA.EndOfDataChar } } { (r: Registers) => { Right(DFA.EndOfData) } },
@@ -420,7 +432,7 @@ class ECState(states: => ArrayBuffer[State], val EC: Maybe[Char], val stateNum: 
   val rules = ArrayBuffer(
     // ECState, means that data0 is EC
     //
-      Rule { (r: Registers) => couldBeFirstChar(r.data1, r.delimiters) } { (r: Registers) =>
+    Rule { (r: Registers) => couldBeFirstChar(r.data1, r.delimiters) } { (r: Registers) =>
       {
         // constituent character
         r.dropChar(r.data0)

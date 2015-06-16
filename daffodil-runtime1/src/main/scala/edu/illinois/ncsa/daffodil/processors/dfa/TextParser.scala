@@ -47,7 +47,7 @@ class TextParser(
 
   def parse(input: DFDLCharReader, delims: Seq[DFADelimiter], isDelimRequired: Boolean): Maybe[ParseResult] = {
     val successes: ArrayBuffer[(DFADelimiter, Registers)] = ArrayBuffer.empty
-    val initialCharPos = input.characterPos
+    //val initialCharPos = input.characterPos
 
     delims.foreach(d => {
       val reg = new Registers(delims)

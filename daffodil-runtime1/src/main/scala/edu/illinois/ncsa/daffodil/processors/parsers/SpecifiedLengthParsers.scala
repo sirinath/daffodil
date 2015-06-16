@@ -12,7 +12,9 @@ import edu.illinois.ncsa.daffodil.util.Maybe._
 import edu.illinois.ncsa.daffodil.processors.Success
 import edu.illinois.ncsa.daffodil.dsom.CompiledExpression
 import edu.illinois.ncsa.daffodil.exceptions.UnsuppressableException
-import edu.illinois.ncsa.daffodil.processors.ScalaPatternParser
+import java.util.regex.Pattern
+import edu.illinois.ncsa.daffodil.util.OnStack
+import java.util.regex.Matcher
 
 abstract class SpecifiedLengthParserBase(eParser: DaffodilParser,
   erd: ElementRuntimeData)
@@ -53,21 +55,26 @@ class SpecifiedLengthPatternParser(
   patternString: String)
   extends SpecifiedLengthParserBase(eParser, erd) {
 
-  private lazy val compiledPattern = ScalaPatternParser.compilePattern(patternString, erd)
+  lazy val pattern = patternString.r.pattern // imagine a really big expensive pattern to compile.
+
+  object withMatcher extends OnStack[Matcher](pattern.matcher(""))
 
   def parse(start: PState): Unit = withParseErrorThrowing(start) {
-    val in = start.inStream
 
-    val reader = in.getCharReader(erd.encodingInfo.knownEncodingCharset.charset, start.bitPos)
+    val dis = start.inStream.dataInputStream
+    val mark = dis.mark
+    withMatcher { m =>
+      val isMatch = dis.lookingAt(m)
 
-    val result = ScalaPatternParser.parseInputPatterned(compiledPattern, reader)
+      // That matched or it didn't. We don't care. We care that
+      // the lookingAt call advanced the bitPos to after the match
+      // which means not at all if there was no match.
+      val endBitLimit = dis.bitPos0b
 
-    val endBitPos =
-      result match {
-        case f if f.isFailure => start.bitPos + 0 // no match == length is zero!
-        case s => start.bitPos + s.numBits(erd)
-      }
-    parse(start, endBitPos)
+      dis.reset(mark)
+
+      parse(start, endBitLimit)
+    }
   }
 }
 
@@ -210,33 +217,65 @@ class SpecifiedLengthExplicitBytesFixedParser(
   }
 }
 
-class SpecifiedLengthExplicitCharactersFixedParser(
+/**
+ * This is used when length is measured in characters, and couldn't be
+ * converted to a computation on length in bytes because a character is encoded as a variable number
+ * of bytes, e.g., in utf-8 encoding where a character can be 1 to 4 bytes.
+ *
+ * This base is used for complex types where we need to know how long the "box"
+ * is, that all the complex content must fit within, where that box length is
+ * measured in characters. In the complex content case we do not need the string that is all the
+ * characters, as we're going to recursively descend and parse it into the complex structure.
+ *
+ * TODO: Idea - this base also ends up being used for nilLiterals (as of this
+ * comment being written 2015-06-30), and there, these two passes, one to
+ * measure, and then one to parse, really are redundant. Could change the way nilLiterals are
+ * parsed to not use this base, and that could boost performance (maybe...) for nilLiteral-intensive formats.
+ */
+abstract class SpecifiedLengthExplicitCharactersParserBase(
   eParser: DaffodilParser,
-  erd: ElementRuntimeData,
-  nChars: Long)
+  erd: ElementRuntimeData)
   extends SpecifiedLengthParserBase(eParser, erd) {
 
-  def parse(start: PState): Unit = withParseErrorThrowing(start) {
+  private def maybeBitPosAfterNChars(start: PState, nChars: Long): Maybe[Long] = {
+    val dis = start.inStream.dataInputStream
+    val mark = dis.mark
+    val hasNChars = dis.skipChars(nChars)
+    val bitLimitAfterNChars = dis.bitPos0b
+    dis.reset(mark)
+    if (hasNChars) Maybe(bitLimitAfterNChars)
+    else Nope
+  }
 
-    val in = start.inStream
-    val rdr = in.getCharReader(erd.encodingInfo.knownEncodingCharset.charset, start.bitPos)
-    val field = rdr.getStringInChars(nChars.toInt).toString() // TODO: Don't we want getStringInChars to accept Long?!
-    val fieldLength = field.length
-    val endBitPos =
-      if (fieldLength != nChars.toInt) start.bitPos + 0 // no match == length is zero!
-      else {
-        val numBits = erd.encodingInfo.knownEncodingStringBitLength(field)
-        start.bitPos + numBits
-      }
-    parse(start, endBitPos)
+  protected def getLength(s: PState): Long
+
+  final def parse(start: PState): Unit = withParseErrorThrowing(start) {
+
+    val nChars = getLength(start)
+    val bitPosAfterNChars = maybeBitPosAfterNChars(start, nChars).getOrElse {
+      PE(start, "%s - %s - Parse failed.  Failed to find exactly %s characters.", this.toString(), erd.name, nChars)
+      return
+    }
+
+    parse(start, bitPosAfterNChars)
   }
 }
 
-class SpecifiedLengthExplicitCharactersParser(
+final class SpecifiedLengthExplicitCharactersFixedParser(
+  eParser: DaffodilParser,
+  erd: ElementRuntimeData,
+  nChars: Long)
+  extends SpecifiedLengthExplicitCharactersParserBase(eParser, erd) {
+
+  override def getLength(s: PState) = nChars
+
+}
+
+final class SpecifiedLengthExplicitCharactersParser(
   eParser: DaffodilParser,
   erd: ElementRuntimeData,
   length: CompiledExpression)
-  extends SpecifiedLengthParserBase(eParser, erd) {
+  extends SpecifiedLengthExplicitCharactersParserBase(eParser, erd) {
 
   def getLength(s: PState): Long = {
     val nBytesAsAny = length.evaluate(s)
@@ -244,21 +283,4 @@ class SpecifiedLengthExplicitCharactersParser(
     nBytes
   }
 
-  def parse(pState: PState): Unit = withParseErrorThrowing(pState) {
-
-    val nChars = getLength(pState)
-    val in = pState.inStream
-    val rdr = in.getCharReader(erd.encodingInfo.knownEncodingCharset.charset, pState.bitPos)
-
-    val field = rdr.getStringInChars(nChars.toInt).toString()
-    val fieldLength = field.length
-    val endBitPos =
-      if (fieldLength != nChars.toInt) pState.bitPos + 0 // no match == length is zero!
-      else {
-        val numBits = erd.encodingInfo.knownEncodingStringBitLength(field)
-        pState.bitPos + numBits
-      }
-
-    parse(pState, endBitPos)
-  }
 }

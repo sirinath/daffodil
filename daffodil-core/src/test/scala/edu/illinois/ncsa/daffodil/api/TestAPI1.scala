@@ -440,7 +440,8 @@ class TestDFDLParser {
           </xs:sequence>
         </xs:complexType>
       </xs:element>)
-    val actual = TestUtils.testBinary(sch, "000000013bFFFFFFFF3b080402013b000000003bFFFFFF7F").result
+    val areTracing = false
+    val actual = TestUtils.testBinary(sch, "000000013bFFFFFFFF3b080402013b000000003bFFFFFF7F", areTracing).result
     val expected = <e1><s1>1</s1><s1>-1</s1><s1>134480385</s1><s1>0</s1><s2>2147483647</s2></e1>
     TestUtils.assertEqualsXMLElements(expected, actual)
   }

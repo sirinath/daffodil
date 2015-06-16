@@ -192,11 +192,14 @@ class TestByteBufferDataInputStream {
 
   @Test def testSignedLong3 {
     val dis = ByteBufferDataInputStream(twenty)
+    // buffer has 0x3132 in first 16 bits
+    // binary that is 00110001 00110010
     var ml = dis.getSignedLong(1)
     assertEquals(0L, ml.get)
     assertEquals(1, dis.bitPos0b)
     ml = dis.getSignedLong(9)
-    assertEquals(0x31.toLong << 2, ml.get)
+    // those bits are 0110001 00 which is 0x0C4 and sign bit is 0 (positive)
+    assertEquals(0x0C4L, ml.get)
     assertEquals(10, dis.bitPos0b)
   }
 
@@ -226,17 +229,18 @@ class TestByteBufferDataInputStream {
     assertEquals(1, ml.get)
     ml = dis.getSignedLong(32)
     assertEquals(33, dis.bitPos0b)
-    assertEquals(((0xC1C2C3C4C5C6C7C8L << 1) >> 32), ml.get)
+    val expected = (((0xC1C2C3C4C5L >> 7) & 0xFFFFFFFFL) << 32) >> 32 // sign extend
+    assertEquals(expected, ml.get)
   }
 
   @Test def testSignedLong7 {
     val dis = ByteBufferDataInputStream(List(0xC1, 0xC2, 0xC3, 0xC4, 0xC5).map { _.toByte }.toArray)
-    var ml = dis.getSignedLong(1)
-    assertEquals(1, dis.bitPos0b)
-    assertEquals(1, ml.get)
+    var ml = dis.getSignedLong(2)
+    assertEquals(2, dis.bitPos0b)
+    assertEquals(-1, ml.get)
     ml = dis.getSignedLong(32)
-    assertEquals(33, dis.bitPos0b)
-    val expected = (0xC1C2C3C4C5000000L << 1) >> 32
+    assertEquals(34, dis.bitPos0b)
+    val expected = (0xC1C2C3C4C5L >> 6) & 0xFFFFFFFFL // will be positive, no sign extend
     assertEquals(expected, ml.get)
   }
 
@@ -249,12 +253,12 @@ class TestByteBufferDataInputStream {
   }
 
   @Test def testUnsignedLong2 {
-    val dis = ByteBufferDataInputStream(List(0xC1, 0xC2, 0xC3, 0xC4, 0xC5).map { _.toByte }.toArray)
+    val dis = ByteBufferDataInputStream(List(0xA5, 0xA5, 0xA5, 0xA5, 0xA5).map { _.toByte }.toArray)
     dis.getSignedLong(1)
     assertEquals(1, dis.bitPos0b)
     var ml = dis.getUnsignedLong(32)
     assertEquals(33, dis.bitPos0b)
-    val expected = (ULong(0xC1C2C3C4C5000000L) << 1) >> 32
+    val expected = ULong(0x4b4b4b4bL)
     assertEquals(expected, ml.get)
   }
 

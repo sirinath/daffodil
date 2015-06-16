@@ -67,6 +67,8 @@ abstract class StringLengthParser(
 
   def parse(start: PState): Unit = withParseErrorThrowing(start) {
 
+    start.inStream.dataInputStream.setDecoder(erd.encodingInfo.getDecoder(start))
+
     log(LogLevel.Debug, "Parsing starting at bit position: %s", start.bitPos)
 
     val nBytes = getLength(start)
@@ -217,29 +219,18 @@ abstract class StringLengthInCharsParser(
 
     log(LogLevel.Debug, "Retrieving reader")
 
-    val reader = getReader(erd.encodingInfo.knownEncodingCharset.charset, start.bitPos, start)
-
-    val field = reader.getStringInChars(nChars.toInt).toString()
-    val fieldLength = field.length
-
-    if (fieldLength != nChars.toInt) {
-      PE(start, "Parse failed to find exactly %s characters.", nChars)
-      return
-    } else {
-      val parsedField = trimByJustification(field)
-      val parsedBits = erd.encodingInfo.knownEncodingStringBitLength(field)
-      val endBitPos = start.bitPos + parsedBits
-
-      log(LogLevel.Debug, "Parsed: %s", field)
-      log(LogLevel.Debug, "Ended at bit position: %s", endBitPos)
-
-      val endCharPos = if (start.charPos == -1) nChars else start.charPos + nChars
-      start.simpleElement.setDataValue(parsedField)
-
-      val nextReader = reader.atBitPos(endBitPos)
-      start.setPos(endBitPos, endCharPos, One(nextReader))
+    val dis = start.inStream.dataInputStream
+    val field = dis.getString(nChars).getOrElse {
+      PE(start, "%s - %s - Parse failed. Failed to find exactly %s characters.", this.toString(), erd.name, nChars)
       return
     }
+
+    val fieldLength = field.length
+
+    val parsedField = trimByJustification(field)
+
+    start.simpleElement.setDataValue(parsedField)
+
   }
 
 }

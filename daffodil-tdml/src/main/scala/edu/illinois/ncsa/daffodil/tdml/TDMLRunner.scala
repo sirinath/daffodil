@@ -66,7 +66,6 @@ import edu.illinois.ncsa.daffodil.externalvars.Binding
 import edu.illinois.ncsa.daffodil.externalvars.ExternalVariablesLoader
 import edu.illinois.ncsa.daffodil.processors.DFDLCharCounter
 import edu.illinois.ncsa.daffodil.processors.GeneralParseFailure
-import edu.illinois.ncsa.daffodil.processors.IterableReadableByteChannel
 import edu.illinois.ncsa.daffodil.util.Error
 import edu.illinois.ncsa.daffodil.util.LogLevel
 import edu.illinois.ncsa.daffodil.util.Logging
@@ -88,7 +87,7 @@ import java.nio.channels.Channels
 import java.nio.charset.CoderResult
 import java.io.InputStream
 import java.io.ByteArrayInputStream
-import edu.illinois.ncsa.daffodil.processors.charset.NonByteSizeCharsetEncoderDecoder
+import edu.illinois.ncsa.daffodil.io.NonByteSizeCharsetEncoderDecoder
 import scala.language.postfixOps
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -264,12 +263,10 @@ class DFDLTestSuite(aNodeFileOrURL: Any,
 
   def runPerfTest(testName: String, schema: Option[Node] = None) {
     var bytesProcessed: Long = 0
-    var charsProcessed: Long = 0
     Tak.calibrate
     val ns = Timer.getTimeNS(testName, {
-      val (by, ch) = runOneTestWithDataVolumes(testName, schema)
-      bytesProcessed = by
-      charsProcessed = ch
+      val nBytes = runOneTestWithDataVolumes(testName, schema)
+      bytesProcessed = nBytes
     })
     val takeonsThisRun = ns / Tak.takeons
     val bpns = ((bytesProcessed * 1.0) / ns)
@@ -309,7 +306,10 @@ class DFDLTestSuite(aNodeFileOrURL: Any,
     runOneTestWithDataVolumes(testName, schema)
   }
 
-  def runOneTestWithDataVolumes(testName: String, schema: Option[Node] = None): (Long, Long) = {
+  /**
+   * Returns number of bytes processed.
+   */
+  def runOneTestWithDataVolumes(testName: String, schema: Option[Node] = None): Long = {
     if (isTDMLFileValid) {
       val testCase = testCases.find(_.name == testName) // Map.get(testName)
       testCase match {
@@ -506,7 +506,10 @@ abstract class TestCase(testCaseXML: NodeSeq, val parent: DFDLTestSuite)
 
   protected val compiler = Compiler(parent.validateDFDLSchemas)
 
-  def run(schemaArg: Option[Node] = None): (Long, Long) = {
+  /**
+   * Returns number of bytes processed.
+   */
+  def run(schemaArg: Option[Node] = None): Long = {
     val suppliedSchema = getSuppliedSchema(schemaArg)
 
     val cfg: Option[DefinedConfig] = config match {
@@ -538,19 +541,13 @@ abstract class TestCase(testCaseXML: NodeSeq, val parent: DFDLTestSuite)
     compiler.setExternalDFDLVariables(externalVarBindings)
 
     val optInputOrExpectedData = document.map { _.data }
-    val nBits = document.map { _.nBits }
+    val nBits: Option[Long] = document.map { _.nBits }
 
     runProcessor(suppliedSchema, optInputOrExpectedData, nBits, errors, warnings, validationErrors, validationMode,
       roundTrip, parent.optDebugger)
 
-    val bytesProcessed = IterableReadableByteChannel.getAndResetCalls
-    val charsProcessed = DFDLCharCounter.getAndResetCount
-    log(LogLevel.Debug, "Bytes processed: " + bytesProcessed)
-    log(LogLevel.Debug, "Characters processed: " + charsProcessed)
-    (bytesProcessed, charsProcessed)
-    // if we get here, the test passed. If we don't get here then some exception was
-    // thrown either during the run of the test or during the comparison.
-    // log(LogLevel.Debug, "Test %s passed.", id))
+    // return number of bytes processed.
+    nBits.getOrElse(0L) / 8
   }
 
   def setupDebugOrTrace(processor: DFDL.DataProcessor) {
@@ -1356,7 +1353,7 @@ class TextDocumentPart(part: Node, parent: Document) extends DataDocumentPart(pa
     val res = (0 to bb.limit() - 1).map { bb.get(_) }
     val bitsAsString = bytes2Bits(res.toArray)
     val enc = encoder.asInstanceOf[NonByteSizeCharsetEncoderDecoder]
-    val nBits = s.length * enc.widthOfACodeUnit
+    val nBits = s.length * enc.bitWidthOfACodeUnit
     val bitStrings = res.map { b => (b & 0xFF).toBinaryString.reverse.padTo(8, '0').reverse }.toList
     val allBits = bitStrings.reverse.mkString.takeRight(nBits)
     val sevenBitChunks = allBits.reverse.sliding(7, 7).map { _.reverse }.toList
@@ -1438,16 +1435,22 @@ class BitsDocumentPart(part: Node, parent: Document) extends DataDocumentPart(pa
 
 class FileDocumentPart(part: Node, parent: Document) extends DocumentPart(part, parent) with Logging {
 
-  override lazy val nBits = -1L // signifies we do not know how many.
+  override lazy val nBits =
+    if (lengthInBytes != -1L) lengthInBytes * 8
+    else -1L // signifies we do not know how many.
 
-  lazy val fileDataInput = {
+  lazy val (url, lengthInBytes) = {
     val maybeURI = parent.parent.parent.findTDMLResource(partRawContent.trim())
     val uri = maybeURI.getOrElse(throw new FileNotFoundException("TDMLRunner: data file '" + partRawContent + "' was not found"))
     val url = uri.toURL
     if (url.getProtocol() == "file") {
       val file = new File(uri)
-      log(LogLevel.Debug, "File size is %s", file.length())
-    }
+      (url, file.length())
+    } else
+      (url, -1L)
+  }
+
+  lazy val fileDataInput = {
     val is = url.openStream()
     val rbc = Channels.newChannel(is)
     rbc.asInstanceOf[DFDL.Input]

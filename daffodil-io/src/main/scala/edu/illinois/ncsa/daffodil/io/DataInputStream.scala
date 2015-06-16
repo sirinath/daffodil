@@ -9,8 +9,12 @@ import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.BitOrder
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.ByteOrder
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.UTF16Width
 import edu.illinois.ncsa.daffodil.util.Maybe
+import edu.illinois.ncsa.daffodil.util.Maybe.Nope
 import edu.illinois.ncsa.daffodil.schema.annotation.props.gen.BinaryFloatRep
 import passera.unsigned.ULong
+import edu.illinois.ncsa.daffodil.util.Misc
+import edu.illinois.ncsa.daffodil.exceptions.Assert
+import edu.illinois.ncsa.daffodil.util.OnStack
 
 /*
  * TODO:
@@ -113,6 +117,41 @@ object DataInputStream {
    * the bit position.
    */
   trait Mark
+
+  /**
+   * Use with OnStack idiom for temporary char buffers
+   */
+  class LocalCharBuffer {
+    private var tempCb: Maybe[CharBuffer] = Nope
+
+    def getCB(nChars: Long) = {
+      Assert.usage(nChars < Int.MaxValue)
+      if (tempCb.isEmpty || tempCb.get.capacity < nChars) {
+        tempCb = Maybe(CharBuffer.allocate(nChars.toInt))
+      }
+      val cb = tempCb.get
+      cb.clear
+      cb.limit(nChars.toInt)
+      cb
+    }
+  }
+
+  object withLocalCharBuffer extends OnStack[LocalCharBuffer](new LocalCharBuffer)
+
+}
+
+trait NonByteSizeCharset {
+  def bitWidthOfACodeUnit: Int // in units of bits
+}
+
+/**
+ * Mixin for Charsets which support initial bit offsets so that
+ * their character codepoints need not be byte-aligned.
+ */
+trait NonByteSizeCharsetEncoderDecoder
+  extends NonByteSizeCharset {
+  def setInitialBitOffset(bitOffset0to7: Int): Unit
+  def setFinalByteBitLimitOffset0b(bitLimitOffset0b: Maybe[Long]): Unit
 }
 
 trait DataInputStream {
@@ -202,9 +241,22 @@ trait DataInputStream {
    * <p>
    * The bitLimit1b is the value of the first bitPos1b beyond the end of the data.
    * Valid bit positions are less than, but not equal to, the bit limit.
+   * <p>
+   * If bitLimit0b is defined, then there IS that much data available at least.
    */
   def bitLimit0b: Maybe[Long]
   final def bitLimit1b: Maybe[Long] = bitLimit0b.map { _ + 1 }
+
+  //  /**
+  //   * Indicates whether it is possible to "go back to the well" to get more data
+  //   * or if all available data has already been retrieved.
+  //   *
+  //   * If true, then we either know there is more data, or we don't know whether
+  //   * there is more data because we haven't checked yet.
+  //   *
+  //   * If false, then there definitely is no more data available.
+  //   */
+  //  def isMoreDataPossible: Boolean
 
   /**
    * Convenience methods that temporarily set and (reliably) restore the bitLimit.
@@ -320,6 +372,15 @@ trait DataInputStream {
    * Upon return, the byte buffer is not 'flipped' by this call. To read out the data
    * that was just written to the byte buffer by this method using relative getter calls
    * the caller must flip the byte buffer.
+   * <p>
+   * If the data source ends in the middle of a byte (possible for bit-oriented data)
+   * then that partial final byte can be transferred. Bits past the end of the partial byte
+   * will be transferred along with the partial byte.
+   * <p>
+   * The final bit position of the DataInputStream excludes any of these additional bits
+   * that are transferred as part of a partial final byte. Hence, if this method is
+   * called and end of data is encountered, then upon return if any bytes are transferred
+   * then bitPos0b == bitLimit0b (if defined)
    */
   def fillByteBuffer(bb: ByteBuffer): Maybe[Int]
 
@@ -451,10 +512,56 @@ trait DataInputStream {
    * that are placed into the char buffer by this method using relative getter calls
    * the caller of this method must flip the char buffer.
    * <p>
+   * When characters are not made up of complete bytes, but fragments of a byte, then
+   * when data ends in the middle of a byte, a character can be decoded from the
+   * partial-final byte, if enough bits are available from the prior byte and the
+   * partial final byte.
+   * <p>
    * Implementation Note: a specialized 4-bit encoding which maps 4 bits to
    * 0-9A-F can be used to treat packed decimal representations like text strings.
    */
   def fillCharBuffer(cb: CharBuffer): Maybe[Long]
+
+  /**
+   * Returns true if it fills all remaining space in the char buffer.
+   *
+   * Convenience method since this idiom is so common due to the
+   * way fillCharBuffer works to return early when decode errors are
+   * encountered.
+   */
+  protected final def fillCharBufferLoop(cb: CharBuffer): Boolean = {
+    var maybeN: Maybe[Long] = Maybe(0)
+    var total: Long = 0
+    val nChars = cb.remaining
+    while (maybeN.isDefined && total < nChars) {
+      maybeN = fillCharBuffer(cb)
+      if (maybeN.isDefined) total += maybeN.get
+    }
+    total == nChars
+  }
+
+  /**
+   * Returns One(string) if nChars are available, Nope otherwise.
+   *
+   * Throws a CharacterCodingException if the encoding error policy is 'error'
+   * and a decode error is detected within nChars.
+   */
+  final def getString(nChars: Long): Maybe[String] = {
+    DataInputStream.withLocalCharBuffer { lcb =>
+      val cb = lcb.getCB(nChars)
+      val gotAll = fillCharBufferLoop(cb)
+      val res = if (!gotAll) Nope
+      else Maybe(cb.flip.toString)
+      res
+    }
+  }
+
+  /**
+   * Skips N characters and returns true, adjusting the bitPos0b based on
+   * parsing them. Returns false if there is not enough data
+   * to skip all N characters.
+   */
+  def skipChars(nChars: Long): Boolean
 
   /**
    * Matches a regex Matcher against a prefix of the data stream.
