@@ -204,7 +204,13 @@ class USASCII7BitPackedDecoder
           output(currentCharCode)
 
         }
-        case (NoPrior, 0, NoData, _) => return CoderResult.UNDERFLOW
+        case (NoPrior, 0, NoData, _) => {
+          // There may have been a partial byte available in the data, and that may provide
+          // sufficient bits to decode a character.
+          //
+          handlePossibleFinalFragmentByte()
+          return CoderResult.UNDERFLOW
+        }
         case (NoPrior, 0, _, NoSpace) => return CoderResult.OVERFLOW
         case (NoPrior, n, YesData, _) => {
           // This happens if we're starting the decode loop at a startBitOffset that is non-zero.
@@ -236,22 +242,7 @@ class USASCII7BitPackedDecoder
           // However, there may have been a partial byte available in the data, and that may provide
           // sufficient bits to decode a character.
           //
-          if (getFinalByteBitLimitOffset0b.isDefined) {
-            val bitLimOffset0b = getFinalByteBitLimitOffset0b.get
-            if (bitLimOffset0b > 0) {
-              // there is a final partial byte (which is beyond the in.remaining()
-              Assert.invariant(in.capacity > in.limit())
-              if (priorByteBitCount + bitLimOffset0b >= bitWidthOfACodeUnit) {
-                // There are enough bits there for another character
-                val savedLimit = in.limit()
-                in.limit(savedLimit + 1)
-                val finalByte = in.get(savedLimit)
-                in.limit(savedLimit)
-                handleByte(Bits.asUnsignedByte(finalByte))
-                // That must be the last byte, so fall through to the return Underflow.
-              }
-            }
-          }
+          handlePossibleFinalFragmentByte()
           return CoderResult.UNDERFLOW
         }
         case (YesPrior, n, YesData, YesSpace) => {
@@ -260,6 +251,25 @@ class USASCII7BitPackedDecoder
           handleByte(currentByte)
         }
         case (_, _, _, NoSpace) => return CoderResult.OVERFLOW
+      }
+
+      def handlePossibleFinalFragmentByte() = {
+        if (getFinalByteBitLimitOffset0b.isDefined) {
+          val bitLimOffset0b = getFinalByteBitLimitOffset0b.get
+          if (bitLimOffset0b > 0) {
+            // there is a final partial byte (which is beyond the in.remaining()
+            Assert.invariant(in.capacity > in.limit())
+            if (priorByteBitCount + bitLimOffset0b >= bitWidthOfACodeUnit) {
+              // There are enough bits there for another character
+              val savedLimit = in.limit()
+              in.limit(savedLimit + 1)
+              val finalByte = in.get(savedLimit)
+              in.limit(savedLimit)
+              handleByte(Bits.asUnsignedByte(finalByte))
+              // That must be the last byte, so fall through to the return Underflow.
+            }
+          }
+        }
       }
       def handleByte(currentByte: Int) {
         //

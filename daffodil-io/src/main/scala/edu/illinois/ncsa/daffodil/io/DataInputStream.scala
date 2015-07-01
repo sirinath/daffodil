@@ -159,6 +159,19 @@ trait DataInputStream {
 
   def limits: Limits
 
+  /**
+   * Allow tuning of these thresholds and starting values. These could,
+   * in principle, be tuned differently for different elements, thereby
+   * keeping limits small when the schema component can be determined to
+   * only require small space, but enabling larger limits/starting values
+   * when a component has larger needs.
+   *
+   * These could be cached on, say,
+   * the ElementRuntimeData object for each element, or some other kind
+   * of dynamic cache.
+   */
+  def setLimits(newLimits: Limits): Unit
+
   /*
    * These limits will come from tunables, or just hard implementation-specific
    * thresholds.
@@ -168,6 +181,7 @@ trait DataInputStream {
     def maximumSimpleElementSizeInCharacters: Long
     def maximumForwardSpeculationLengthInBytes: Long
     def maximumRegexMatchLengthInCharacters: Long
+    def defaultInitialRegexMatchLimitInChars: Long
   }
 
   /*
@@ -615,7 +629,7 @@ trait DataInputStream {
    * strings by the underlying Matcher and regular expression API upon which this is
    * built.
    */
-  def lookingAt(matcher: Matcher): Boolean
+  def lookingAt(matcher: Matcher, initialRegexMatchLimitInChars: Long = limits.defaultInitialRegexMatchLimitInChars): Boolean
 
   /**
    * As characters are iterated, the underlying bit position changes.

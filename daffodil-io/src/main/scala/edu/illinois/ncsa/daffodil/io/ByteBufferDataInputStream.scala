@@ -127,6 +127,7 @@ class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) 
     dec
   }
   var debugging: Boolean = false
+  var adaptedRegexMatchBufferLimit: Int = 0
   // any members added here must be added to assignFrom below.
 
   object charIteratorState { // CharIterator state
@@ -150,6 +151,7 @@ class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) 
     this.maybeUTF16Width = other.maybeUTF16Width
     this.decoder = other.decoder
     this.debugging = other.debugging
+    this.adaptedRegexMatchBufferLimit = other.adaptedRegexMatchBufferLimit
     this.charIteratorState.cb = other.charIteratorState.cb
     this.charIteratorState.deltaBits = other.charIteratorState.deltaBits
     this.charIteratorState.isFetched = other.charIteratorState.isFetched
@@ -212,14 +214,21 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
 
   def isFixedWidthEncoding = st.maybeCharWidthInBits.isDefined
 
-  object SSDISLimits extends Limits {
-    def maximumSimpleElementSizeInBytes: Long = 1024
-    def maximumSimpleElementSizeInCharacters: Long = 1024
+  private object BBDISLimits extends Limits {
+    def maximumSimpleElementSizeInBytes: Long = 1024 * 1024
+    def maximumSimpleElementSizeInCharacters: Long = 1024 * 1024
     def maximumForwardSpeculationLengthInBytes: Long = 1024 * 1024
-    def maximumRegexMatchLengthInCharacters: Long = 1024
+    def maximumRegexMatchLengthInCharacters: Long = 1024 * 1024
+    def defaultInitialRegexMatchLimitInChars: Long = 32
   }
 
-  def limits: Limits = SSDISLimits
+  private var limits_ : Limits = BBDISLimits
+
+  def limits: Limits = limits_
+
+  def setLimits(newLimits: Limits) {
+    limits_ = newLimits
+  }
 
   private def bytePos0b_ = data.position
 
@@ -990,6 +999,7 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     var nBytesConsumed: Int = 0
     val decoder = st.decoder match {
       case decoderWithBits: NonByteSizeCharsetEncoderDecoder => {
+        decoderWithBits.reset()
         decoderWithBits.setInitialBitOffset(st.bitOffset0b)
         decoderWithBits.setFinalByteBitLimitOffset0b(st.maybeBitLimitOffset0b)
         decoderWithBits
@@ -1086,7 +1096,6 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
   // it's only a data member to avoid allocating these repeatedly.
   private val regexMatchBuffer = CharBuffer.allocate(limits.maximumRegexMatchLengthInCharacters.toInt)
   private val lengthDeterminationBuffer = CharBuffer.allocate(limits.maximumRegexMatchLengthInCharacters.toInt)
-  private val initialRegexMatchLimit = 32
 
   private def needMoreData(bufPos: Int): Boolean = {
     val existingLimit = regexMatchBuffer.limit
@@ -1102,8 +1111,9 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
       if (existingLimit < existingCapacity) {
         // can enlarge it in place by increasing the limit.
         regexMatchBuffer.position(existingLimit)
-        val newLimit = math.min(existingLimit * 2, existingCapacity)
-        regexMatchBuffer.limit(newLimit)
+        st.adaptedRegexMatchBufferLimit = math.min(st.adaptedRegexMatchBufferLimit * 2, existingCapacity)
+        // println("regex match buffer size increased to " + st.adaptedRegexMatchBufferLimit)
+        regexMatchBuffer.limit(st.adaptedRegexMatchBufferLimit)
         false // not done, try the match again
       } else {
         Assert.invariant(existingLimit == existingCapacity)
@@ -1115,12 +1125,13 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     isMatchDone
   }
 
-  def lookingAt(matcher: java.util.regex.Matcher): Boolean = {
+  def lookingAt(matcher: java.util.regex.Matcher, initialRegexMatchLimitInChars: Long = limits.defaultInitialRegexMatchLimitInChars): Boolean = {
     val initialBitPos0b = bitPos0b
     var isMatchDone = false
     var isAMatch: Boolean = false
+    st.adaptedRegexMatchBufferLimit = math.max(initialRegexMatchLimitInChars.toInt, st.adaptedRegexMatchBufferLimit)
     regexMatchBuffer.clear
-    regexMatchBuffer.limit(initialRegexMatchLimit)
+    regexMatchBuffer.limit(st.adaptedRegexMatchBufferLimit)
     var positionAfterLastFill = regexMatchBuffer.position()
     var limitAfterLastFill = regexMatchBuffer.limit()
     while (!isMatchDone) {
@@ -1187,6 +1198,12 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
       // now we have to figure out how long in bytes the match is.
       //
       val nCharsInMatch = matcher.group().length
+      if (nCharsInMatch < st.adaptedRegexMatchBufferLimit) {
+        val newLimit = math.max(nCharsInMatch, limits.defaultInitialRegexMatchLimitInChars.toInt)
+        //        if (newLimit > limits.defaultInitialRegexMatchLimitInChars.toInt)
+        //          println("regex match buffer size decreased to " + newLimit)
+        st.adaptedRegexMatchBufferLimit = newLimit // set the prior value as our adapted length
+      }
       val nBitsConsumed: Long =
         if (this.isFixedWidthEncoding) {
           // that means the characters are fixed width
