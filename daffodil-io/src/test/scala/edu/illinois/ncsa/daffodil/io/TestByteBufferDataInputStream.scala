@@ -461,7 +461,7 @@ class TestByteBufferDataInputStream {
    * Illustrates that you cannot restart a match that is
    * partway through the regex.
    */
-  @Test def characterizeMatcherAfterHitEndRequireEnd1 {
+  @Test def testCharacterizeMatcherAfterHitEndRequireEnd1 {
     val pat = Pattern.compile("a*")
     val m = pat.matcher("")
     val cb = CharBuffer.wrap("aaaaa")
@@ -490,7 +490,7 @@ class TestByteBufferDataInputStream {
     assertEquals(1, end)
   }
 
-  @Test def characterizeMatcherAfterHitEndRequireEnd2 {
+  @Test def testCharacterizeMatcherAfterHitEndRequireEnd2 {
     val pat = Pattern.compile("a*b")
     val m = pat.matcher("")
     val cb = CharBuffer.wrap("aaab")
@@ -528,7 +528,7 @@ class TestByteBufferDataInputStream {
    * the nBytesConsumed by the fillCharBuffer gives the right
    * length.
    */
-  @Test def characterizeMatcherAfterHitEndRequireEnd2a {
+  @Test def testCharacterizeMatcherAfterHitEndRequireEnd2a {
     val pat = Pattern.compile("aaa*b")
     val m = pat.matcher("")
     val cb = CharBuffer.wrap("aaab")
@@ -623,6 +623,27 @@ class TestByteBufferDataInputStream {
     assertEquals("abc年de月fg日\uFFFDхи", actual)
     val expectedByteLength = data1.length + badByte.length + "хи".getBytes(enc).length
     assertEquals(expectedByteLength * 8, dis.bitPos0b)
+  }
+
+  @Test def testDotMatchesNewline1 {
+    val enc = "iso-8859-1"
+    val dataURI = Misc.getRequiredResource("iso8859.doc.dat")
+    val dataInput = dataURI.toURL.openStream()
+    val dis = ByteBufferDataInputStream(dataInput, 0)
+    val regex = """(?x)(?s) # free spacing mode, dot matches newlines too
+            .{1,8192}?                # up to 8K of front matter page content
+            \f?                       # a form-feed
+            (?=                       # lookahead (followed by but not including...)
+              (?> \s | \x08 ){1,100}? # whitespace or backspace (x08)
+              MESSAGE\ DESCRIPTION\r
+              \s{1,100}?
+              -{19}\r                 # exactly 19 hyphens and a CR
+            )                         # end lookahead """
+    val pattern = Pattern.compile(regex)
+    val matcher = pattern.matcher("")
+    val isMatch = dis.lookingAt(matcher)
+    assertFalse(isMatch)
+    assertTrue(matcher.hitEnd)
   }
 
 }

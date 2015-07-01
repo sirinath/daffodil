@@ -55,7 +55,7 @@ class StringPatternMatchedParser(patternString: String,
 
   val eName = erd.name
 
-  lazy val pattern = patternString.r.pattern // imagine a really big expensive pattern to compile.
+  lazy val pattern = ("(?s)" + patternString).r.pattern // imagine a really big expensive pattern to compile.
 
   object withMatcher extends OnStack[Matcher](pattern.matcher(""))
 

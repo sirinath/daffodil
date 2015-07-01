@@ -29,7 +29,7 @@ abstract class AssertPatternParserBase(
 
   // private lazy val compiledPattern = ScalaPatternParser.compilePattern(testPattern, rd)
 
-  lazy val pattern = testPattern.r.pattern // imagine a really big expensive pattern to compile.
+  lazy val pattern = ("(?s)" + testPattern).r.pattern // imagine a really big expensive pattern to compile.
   object withMatcher extends OnStack[Matcher](pattern.matcher(""))
 
   final def parse(start: PState): Unit = {
@@ -76,7 +76,7 @@ class AssertPatternParser(
       log(LogLevel.Debug, "Assert Pattern success for testPattern %s", testPattern)
     } else {
       log(LogLevel.Debug, "Assert Pattern fail for testPattern %s", testPattern)
-      val diag = new AssertionFailed(rd.schemaFileLocation, start, message + " " + testPattern)
+      val diag = new AssertionFailed(rd.schemaFileLocation, start, message)
       start.setFailed(diag)
     }
   }
