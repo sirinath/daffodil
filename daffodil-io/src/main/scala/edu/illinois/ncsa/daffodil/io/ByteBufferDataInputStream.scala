@@ -100,10 +100,67 @@ object ByteBufferDataInputStream {
 
 }
 
-/*
-   * The state that must be saved and restored by mark/reset calls
-   */
-class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) extends DataInputStream.Mark {
+/**
+ * The state that should be merged into PState eventually.
+ *
+ * As of this writing, there is a bunch of copying of DataInputStream objects
+ * to provide compatibility with the older functional-style input layer which
+ * copied the PState objects and InStream objects endlessly.
+ *
+ * The compatibility code still does this copying.
+ *
+ * So, to make the copying cheaper, we recognize that all the copies of
+ * a specific DataInputStream object are really all part of the backtracking
+ * business for the same thread.
+ *
+ * Some state is only needed per thread, so we don't need to copy it
+ * over and over for the compatibility layer. We can just share it via
+ * thread-local data.
+ *
+ * This is very unlike the state that must be saved/restored by the mark/reset discipline
+ */
+private class TLState {
+  // val markStack = mutable.Stack[MarkState]() // FIXME: see comment below in TLStateAccessMixin
+  val markPool = mutable.Stack[MarkState]()
+  val skipCharBuf = CharBuffer.allocate(BBDISLimits.maximumSimpleElementSizeInCharacters.toInt)
+  val regexMatchBuffer = CharBuffer.allocate(BBDISLimits.maximumRegexMatchLengthInCharacters.toInt)
+  val lengthDeterminationBuffer = CharBuffer.allocate(BBDISLimits.maximumRegexMatchLengthInCharacters.toInt)
+}
+
+protected trait TLStateAccessMixin {
+  //
+  // FIXME: I am not exactly sure why, but tests fail if the markStack is maintained on the thread local
+  // because the same MarkState object gets released more than once.
+  //
+  // So all the other state, except markStack, is on the thread local, but every BBDIS instance has
+  // its own markStack.
+  //
+  // protected final def markStack = tlState.markStack
+  protected final val markStack = mutable.Stack[MarkState]()
+
+  private lazy val tlState = TLState.get() // just once please, because a BBDIS can't be shared across threads.
+  protected final def markPool = tlState.markPool
+  protected final def skipCharBuf = tlState.skipCharBuf
+  protected final def regexMatchBuffer = tlState.regexMatchBuffer
+  protected final def lengthDeterminationBuffer = tlState.lengthDeterminationBuffer
+}
+
+private object TLState extends ThreadLocal[TLState] {
+  final def alloc = new TLState
+  override protected def initialValue() = alloc
+}
+
+/**
+ * The state that must be saved and restored by mark/reset calls
+ *
+ * Really all this information wants to be carried on the PState, and saved
+ * by copying from there to one of these objects on the mark stack, and assigned back to the PState
+ * on a reset.
+ */
+final class MarkState(initialBitPos0b: Long,
+  defaultCodingErrorAction: CodingErrorAction,
+  var dis: ByteBufferDataInputStream)
+  extends DataInputStream.Mark {
   var savedBytePosition0b: Int = 0
   var savedByteLimit0b: Int = 0
   /**
@@ -128,17 +185,12 @@ class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) 
   }
   var debugging: Boolean = false
   var adaptedRegexMatchBufferLimit: Int = 0
+  var limits_ : DataInputStream.Limits = BBDISLimits
+  val charIterator = new CharIterator(this, dis)
   // any members added here must be added to assignFrom below.
 
-  object charIteratorState { // CharIterator state
-    var cb = CharBuffer.allocate(2) // allow for 2 in case of surrogate pair
-    var deltaBits: Int = 0
-    var isFetched = false
-    var bitPos0bAtLastFetch = 0L
-    // any members added here must be added to assignFrom below.
-  }
-
-  def assignFrom(other: State): Unit = {
+  def assignFrom(other: MarkState): Unit = {
+    this.dis = other.dis
     this.savedBytePosition0b = other.savedBytePosition0b
     this.savedByteLimit0b = other.savedByteLimit0b
     this.bitOffset0b = other.bitOffset0b
@@ -152,13 +204,18 @@ class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) 
     this.decoder = other.decoder
     this.debugging = other.debugging
     this.adaptedRegexMatchBufferLimit = other.adaptedRegexMatchBufferLimit
-    this.charIteratorState.cb = other.charIteratorState.cb
-    this.charIteratorState.deltaBits = other.charIteratorState.deltaBits
-    this.charIteratorState.isFetched = other.charIteratorState.isFetched
-    this.charIteratorState.bitPos0bAtLastFetch = other.charIteratorState.bitPos0bAtLastFetch
+    this.limits_ = other.limits_
+    this.charIterator.assignFrom(other.charIterator)
   }
 }
 
+private object BBDISLimits extends DataInputStream.Limits {
+  def maximumSimpleElementSizeInBytes: Long = 1024 * 1024
+  def maximumSimpleElementSizeInCharacters: Long = 1024 * 1024
+  def maximumForwardSpeculationLengthInBytes: Long = 1024 * 1024
+  def maximumRegexMatchLengthInCharacters: Long = 1024 * 1024
+  def defaultInitialRegexMatchLimitInChars: Long = 32
+}
 /**
  * Simple realization of the DataInputStream API
  *
@@ -173,8 +230,8 @@ class State(initialBitPos0b: Long, defaultCodingErrorAction: CodingErrorAction) 
  * The backward compatibility layers, however, until removed, make copies of
  * these objects, and those may have non-zero positions. E.g., see the def makeACopy.
  */
-final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b: Long)
-  extends DataInputStream {
+final class ByteBufferDataInputStream private (val data: ByteBuffer, initialBitPos0b: Long)
+  extends DataInputStream with TLStateAccessMixin {
 
   Assert.usage(initialBitPos0b >= 0)
   Assert.usage(initialBitPos0b / 8 < data.capacity() ||
@@ -206,35 +263,25 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
   @deprecated("2015-06-22", "Remove when InStream is replaced fully by DataInputStream - which uses mark/reset to backtrack, not copying")
   def makeACopy() = {
     val cl = new ByteBufferDataInputStream(data.duplicate(), bitPos0b)
-    cl.st.assignFrom(st.asInstanceOf[State])
+    cl.st.assignFrom(st)
     cl
   }
 
-  private object st extends State(initialBitPos0b, defaultCodingErrorAction)
+  val st = new MarkState(initialBitPos0b, defaultCodingErrorAction, this)
 
   def isFixedWidthEncoding = st.maybeCharWidthInBits.isDefined
 
-  private object BBDISLimits extends Limits {
-    def maximumSimpleElementSizeInBytes: Long = 1024 * 1024
-    def maximumSimpleElementSizeInCharacters: Long = 1024 * 1024
-    def maximumForwardSpeculationLengthInBytes: Long = 1024 * 1024
-    def maximumRegexMatchLengthInCharacters: Long = 1024 * 1024
-    def defaultInitialRegexMatchLimitInChars: Long = 32
-  }
+  def limits: DataInputStream.Limits = st.limits_
 
-  private var limits_ : Limits = BBDISLimits
-
-  def limits: Limits = limits_
-
-  def setLimits(newLimits: Limits) {
-    limits_ = newLimits
+  def setLimits(newLimits: DataInputStream.Limits) {
+    st.limits_ = newLimits
   }
 
   private def bytePos0b_ = data.position
 
   def bitPos0b: Long = (bytePos0b_ << 3) + st.bitOffset0b
 
-  private def setBitPos0b(newBitPos0b: Long) {
+  def setBitPos0b(newBitPos0b: Long) {
     Assert.invariant(newBitPos0b < (Int.MaxValue * 8L))
     Assert.invariant(newBitPos0b >= 0)
     val newBitOffset0b = (newBitPos0b & 0x7).toInt
@@ -490,256 +537,7 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     }
   }
 
-  private sealed trait LongConverter {
-
-    def getSignedLong(bitLengthFrom1To64: Int): Maybe[Long]
-
-    protected final def wrapUp(bitLengthFrom1To64: Int, cooked: Long): Long = {
-      setBitPos0b(bitPos0b + bitLengthFrom1To64)
-      val cookedFor1Bit = if (bitLengthFrom1To64 == 1 && cooked == -1) 1 else cooked
-      cookedFor1Bit
-    }
-
-    private def haveEnoughBits(bitLengthFrom1To64: Int): Boolean = {
-      Assert.invariant(bitLimit0b.isDefined)
-      val bitLim = bitLimit0b.get
-      if (bitPos0b + bitLengthFrom1To64 > bitLim) false
-      else true
-    }
-
-    protected final def populateSmallBuf(bitLengthFrom1To64: Int): Maybe[Int] = {
-      if (!haveEnoughBits(bitLengthFrom1To64)) return Nope
-      val nBytesNeeded = computeNBytesNeeded(bitLengthFrom1To64, st.bitOffset0b)
-      val savedDataLimit = data.limit()
-      data.limit(data.position() + nBytesNeeded)
-      val savedBytePos0b = data.position()
-      smallBuf.clear()
-      smallBuf.put(data).flip // puts until data runs out of bytes (hits limit) or smallBuf is full.
-      data.position(savedBytePos0b)
-      data.limit(savedDataLimit) // restore data limit
-      One(nBytesNeeded)
-    }
-
-    protected final def bigEndianBytesToSignedLong(bb: ByteBuffer, lengthInBytes: Int,
-      startingByteOffset0b: Int, bitLengthFrom1To64: Int): Long = {
-      var accumulator = 0L
-      var i = 0
-      while (i < lengthInBytes) {
-        accumulator <<= 8
-        accumulator += Bits.asUnsignedByte(smallBuf.get(i + startingByteOffset0b))
-        i += 1
-      }
-      val value = unSignExtend(accumulator, bitLengthFrom1To64) // ?? Redundant ??
-      val signed = signExtend(value, bitLengthFrom1To64)
-      wrapUp(bitLengthFrom1To64, signed)
-    }
-  }
-
-  private object Converter_BE_MSBFirst extends LongConverter {
-
-    final def getSignedLong(bitLengthFrom1To64: Int): Maybe[Long] = {
-      val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64)
-      val result =
-        maybeNBytesNeeded.map {
-          nBytesNeeded =>
-            //
-            // smallBuf now contains the bytes we need to create the value
-            // and at this point we know we will successfully create a value.
-            //
-            val numBitsInLastByte = (bitPos0b + bitLengthFrom1To64) % 8
-            val lastByteShift = if (numBitsInLastByte == 0) 0 else 8 - numBitsInLastByte
-            Bits.shiftRight(smallBuf, lastByteShift.toInt)
-            val lim = smallBuf.limit
-            val numBitsInFirstByte = math.max(8 - st.bitOffset0b - lastByteShift, 0)
-            //
-            // The shift above, if done, may have shifted all the bits
-            // out of the left-most byte of the smallBuf. If so we
-            // don't want to include that byte in computing the value
-            //
-            val (numBytesRemaining, offset) =
-              if (numBitsInFirstByte > 0) {
-                // we didn't shift every bit out of the first byte
-                (nBytesNeeded, 0)
-              } else {
-                // we shifted every bit out of the first byte
-                (nBytesNeeded - 1, 1)
-              }
-            //
-            // Now we just accumulate the bytes into the result value.
-            //
-            bigEndianBytesToSignedLong(smallBuf, numBytesRemaining, offset, bitLengthFrom1To64)
-        }
-      result
-    }
-
-  }
-
-  private object Converter_LE_MSBFirst extends LongConverter {
-
-    final def getSignedLong(bitLengthFrom1To64: Int): Maybe[Long] = {
-      val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64)
-
-      val result = maybeNBytesNeeded.map { nBytesNeeded =>
-        //
-        // smallBuf now contains the bytes we need to create the value
-        // and at this point we know we will successfully create a value.
-        //
-        if (smallBuf.limit() == 1) {
-          //
-          // only 1 byte holds the entire representation
-          //
-          // It is worth special case code for this, because many bit fields
-          // are just one or a small handful of bits, so many will live in 
-          // just one byte.
-          //
-          val bitLimitOffset0b = (bitPos0b + bitLengthFrom1To64) % 8
-          val numUnusedBits = if (bitLimitOffset0b == 0) 0 else 8 - bitLimitOffset0b
-          val theByte = Bits.asUnsignedByte(smallBuf.get(0))
-          val mask = -1.toByte >>> st.bitOffset0b
-          val maskedByte = (theByte >>> numUnusedBits) & mask
-          val result = signExtend(maskedByte, bitLengthFrom1To64)
-          wrapUp(bitLengthFrom1To64, result)
-        } else {
-          //
-          // There are two or more bytes holding the representation. 
-          //
-          // The bits of interest start somewhere in the first byte of smallBuf
-          // (bitOffset0b tells us exactly where)
-          // and end also in that byte or in some later byte at farthest in the 9th byte
-          // of smallBuf. (bitOffset0b + bitLengthFrom1To64) tell us exactly where
-          // it ends and how far away that is.
-          //
-          // The order of bytes in smallBuf is exactly as those bytes appeared in 
-          // the data stream.
-          // 
-          // Per the DFDL spec, the start position cannot affect the value. So 
-          // we can shift left (because bit order is MSBFirst) until the first bit
-          // is the most significant bit of the first byte.
-          //
-          Bits.shiftLeft(smallBuf, st.bitOffset0b)
-          //
-          // Now, there's a possibility that this shift shifted all bits of interest
-          // out of the last byte of smallBuf
-          //
-          val limitingBitPos0b = bitPos0b + bitLengthFrom1To64 // last bit position + 1 is the 'limiting' bit.
-          val numBitsInLastByte = {
-            val m = limitingBitPos0b % 8
-            if (m == 0) 8 else m
-          }
-          if (st.bitOffset0b >= numBitsInLastByte) {
-            // the shift left above will leave no bits in the final byte. 
-            Assert.invariant(smallBuf.limit() > 1)
-            smallBuf.limit(smallBuf.limit - 1) // shorten it by 1 byte.
-          }
-          //
-          Bits.reverseBytes(smallBuf)
-          //
-          // now bytes of smallBuf are such that the most significant bits are in 
-          // the first byte, and least significant are in the last byte.
-          // 
-          // However, the most significant byte has the problem that the bits in it 
-          // are now in the most-significant end of that byte. They need to be shifted right
-          // to occupy the least significant bit locations of that byte.
-          //
-          val numBitsInNewFirstByte =
-            if (st.bitOffset0b >= numBitsInLastByte) {
-              8 - (st.bitOffset0b - numBitsInLastByte)
-            } else {
-              numBitsInLastByte - st.bitOffset0b
-            }
-
-          val firstByte = smallBuf.get(0)
-
-          if (numBitsInNewFirstByte < 8) {
-            // there are some unused bits
-            val bitsUnused = 8 - numBitsInNewFirstByte
-            val newFirstByte = firstByte >> bitsUnused
-            smallBuf.put(0, newFirstByte.toByte)
-          }
-          //
-          // Now the smallBuf bytes contain our big-endian value, 
-          //
-          bigEndianBytesToSignedLong(smallBuf, smallBuf.remaining(), 0, bitLengthFrom1To64)
-        }
-      }
-      result
-    }
-
-  }
-
-  private object Converter_LE_LSBFirst extends LongConverter {
-
-    final def getSignedLong(bitLengthFrom1To64: Int): Maybe[Long] = {
-      val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64)
-      val result = maybeNBytesNeeded.map { nBytesNeeded =>
-        //
-        // smallBuf now contains the bytes we need to create the value
-        // and at this point we know we will successfully create a value.
-        //
-        // The bits of interest start somewhere in the first byte of smallBuf
-        // (bitOffset0b tells us exactly where, though because bit order is 
-        // LSBFirst, those bits occupy the most-significant bits of that first byte
-        // 
-        // and end also in that byte or in some later byte at farthest in the 9th byte
-        // of smallBuf. (bitOffset0b + bitLengthFrom1To64) tell us exactly where
-        // it ends and how far away that is, again bit order tells us that
-        // those bits in the last byte are in the least significant bits of that byte
-        //
-        // The order of bytes in smallBuf is exactly as those bytes appeared in 
-        // the data stream.
-        //
-        // in order to be able to shift the bits around we must reverse the bits 
-        // within the bytes
-        Bits.reverseBitsWithinBytes(smallBuf)
-        //
-        // The bit-string is now properly continuous across all the byte boundaries
-        // The bits of interest in the first byte are the least significant bits
-        // and the bits of interest in the last byte are the most significant bits
-        //
-        val numBitsInFirstByte = 8 - st.bitOffset0b
-        val numUnusedBitsInFirstByte = 8 - numBitsInFirstByte
-        Bits.shiftLeft(smallBuf, numUnusedBitsInFirstByte)
-        //
-        // Did we shift away all bits in the last byte?
-        val numBitsInLastByteInitially = {
-          val m = (bitPos0b + bitLengthFrom1To64) % 8
-          if (m == 0) 8 else m
-        }
-        val numUnusedBitsInLastByteInitially = 8 - numBitsInLastByteInitially
-        // 
-        // The left shift above, if done, may have shifted all the bits
-        // out of the right-most byte of the smallBuf. If so we
-        // don't want to include that byte in computing the value
-        //
-        val numBitsRemainingInLastByte = math.max(8 - numUnusedBitsInLastByteInitially - numUnusedBitsInFirstByte, 0)
-        val numBytesRemaining =
-          if (numBitsRemainingInLastByte > 0) {
-            // we didn't shift every bit out of the last byte
-            nBytesNeeded
-          } else {
-            // we shifted every bit out of the last byte
-            nBytesNeeded - 1
-          }
-        Assert.invariant(numBytesRemaining == smallBuf.limit || numBytesRemaining == (smallBuf.limit - 1))
-        smallBuf.limit(numBytesRemaining)
-
-        // Now we can reverse the bits back to their original bit order
-        // and then reverse the bytes to reflect little-endian
-
-        Bits.reverseBytesAndReverseBits(smallBuf)
-        //
-        // We know now that any unused bits of the first byte are the most-significant
-        // bits and all other bytes are full (all 8 bits in use).
-        //
-        // So we have ordinary big-endian bytes now and can construct the result value
-        //
-        bigEndianBytesToSignedLong(smallBuf, numBytesRemaining, 0, bitLengthFrom1To64)
-      }
-      result
-    }
-  }
-
-  private def computeNBytesNeeded(bitLength: Int, bitOffset0b: Int) = {
+  def computeNBytesNeeded(bitLength: Int, bitOffset0b: Int) = {
     val nBitsRemainingInFirstByte = (8 - bitOffset0b)
     val nAdditionalBitsNeeded = bitLength - nBitsRemainingInFirstByte
     val nAdditionalBytesNeeded = (nAdditionalBitsNeeded >> 3) +
@@ -747,13 +545,6 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     val needed = 1 + nAdditionalBytesNeeded
     needed
   }
-
-  /**
-   * Allows for 9 bytes. which we may need if there is a bit-offset such that the
-   * bits straddle 9 bytes. E.g., at offset 7, a 59 bit length will straddle 9 bytes, using
-   * 1 bit from the first byte, and 2 bits from the last byte.
-   */
-  private val smallBuf = ByteBuffer.allocate(9)
 
   def signExtend(l: Long, bitLength: Int): Long = {
     Assert.usage(bitLength > 0 && bitLength <= 64)
@@ -779,14 +570,14 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     Assert.usage(bitLengthFrom1To64 <= 64)
     if (data.order() eq java.nio.ByteOrder.BIG_ENDIAN) {
       Assert.invariant(st.bitOrder eq BitOrder.MostSignificantBitFirst)
-      Converter_BE_MSBFirst.getSignedLong(bitLengthFrom1To64)
+      Converter_BE_MSBFirst.getSignedLong(bitLengthFrom1To64, this)
     } else {
       Assert.invariant(data.order() eq java.nio.ByteOrder.LITTLE_ENDIAN)
       if (st.bitOrder eq BitOrder.MostSignificantBitFirst) {
-        Converter_LE_MSBFirst.getSignedLong(bitLengthFrom1To64)
+        Converter_LE_MSBFirst.getSignedLong(bitLengthFrom1To64, this)
       } else {
         Assert.invariant(st.bitOrder eq BitOrder.LeastSignificantBitFirst)
-        Converter_LE_LSBFirst.getSignedLong(bitLengthFrom1To64)
+        Converter_LE_LSBFirst.getSignedLong(bitLengthFrom1To64, this)
       }
     }
   }
@@ -907,19 +698,18 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     }
   }
 
-  private val markStack = mutable.Stack[State]()
-  private val markPool = mutable.Stack[State]()
-
-  private def getStateFromPool: State = {
-    if (markPool.isEmpty) new State(0, defaultCodingErrorAction)
+  private def getStateFromPool: MarkState = {
+    if (markPool.isEmpty) new MarkState(0, defaultCodingErrorAction, this)
     else markPool.pop
   }
-  private def releaseStateToPool(st: State) {
+
+  private def releaseStateToPool(st: MarkState) {
     markPool.push(st)
   }
 
   def mark: DataInputStream.Mark = {
     val m = getStateFromPool
+    Assert.invariant(!markStack.contains(m))
     m.assignFrom(st)
     m.savedBytePosition0b = data.position()
     m.savedByteLimit0b = data.limit()
@@ -930,12 +720,16 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
 
   private def releaseUntilMark(mark: DataInputStream.Mark) = {
     Assert.usage(!markStack.isEmpty)
+    Assert.invariant(!markPool.contains(mark))
+    Assert.invariant(markStack.contains(mark))
     var current = markStack.pop
     while (!(markStack.isEmpty) && (current ne mark)) {
       releaseStateToPool(current)
       current = markStack.pop
     }
-    if (current ne mark) Assert.invariantFailed("mark not found in mark stack")
+    if (current ne mark) {
+      Assert.invariantFailed("mark not found in mark stack")
+    }
     current
   }
 
@@ -948,8 +742,7 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     data.order(st.savedByteOrder)
     releaseStateToPool(current)
 
-    CharIterator.reset()
-    st.decoder.reset()
+    st.charIterator.reset() // this also resets the decoder.
   }
 
   def discard(mark: DataInputStream.Mark): Unit = {
@@ -1074,8 +867,6 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     }
   }
 
-  private var skipCharBuf = CharBuffer.allocate(limits.maximumSimpleElementSizeInCharacters.toInt)
-
   def skipChars(nChars: Long): Boolean = {
     Assert.usage(nChars <= skipCharBuf.capacity())
     skipCharBuf.clear
@@ -1091,11 +882,6 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     if (total < nChars) false
     true
   }
-
-  // not part of state because it is only used locally by lookingAt.
-  // it's only a data member to avoid allocating these repeatedly.
-  private val regexMatchBuffer = CharBuffer.allocate(limits.maximumRegexMatchLengthInCharacters.toInt)
-  private val lengthDeterminationBuffer = CharBuffer.allocate(limits.maximumRegexMatchLengthInCharacters.toInt)
 
   private def needMoreData(bufPos: Int): Boolean = {
     val existingLimit = regexMatchBuffer.limit
@@ -1254,77 +1040,7 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     isAMatch // if true, then the matcher contains details about the match.
   }
 
-  private object CharIterator extends Iterator[Char] {
-
-    private def ist = st.charIteratorState
-
-    def reset() {
-      ist.isFetched = false
-      ist.cb.clear()
-      ist.deltaBits = 0
-      st.decoder.reset()
-    }
-
-    /**
-     * returns false if unable to fetch a character
-     * returns true if it is able.
-     * Stores number of bits consumed by the character
-     * in deltaBits
-     */
-    private def fetch(): Boolean = {
-      val dataBitPosBefore0b = bitPos0b
-      align(st.encodingMandatoryAlignmentInBits)
-      ist.bitPos0bAtLastFetch = bitPos0b // keep track of where we start trying to fetch a character
-      ist.cb.clear()
-      ist.cb.limit(1)
-      st.decoder.reset()
-      val maybeNumChars = fillCharBuffer(ist.cb) // throws if a decode error and encodingErrorPolicy="error"
-      if (maybeNumChars.isEmpty) {
-        // Couldn't get one character
-        ist.deltaBits = 0
-        return false
-      }
-      // got 1 character 
-      val dataBitPosAfter0b = bitPos0b
-      ist.deltaBits = (dataBitPosAfter0b - dataBitPosBefore0b).toInt
-      setBitPos0b(dataBitPosBefore0b) // restore data position so we aren't advancing if called by hasNext
-      true
-    }
-
-    def hasNext(): Boolean = {
-      if (ist.bitPos0bAtLastFetch != bitPos0b) {
-        // something moved the position between the last
-        // call to hasNext, and this call to next.
-        // (or between two calls to hasNext()
-        // so we have to invalidate any character
-        // cached by hasNext.
-        ist.isFetched = false
-      }
-      if (!ist.isFetched) ist.isFetched = fetch()
-      ist.isFetched
-    }
-
-    def next(): Char = {
-      if (ist.bitPos0bAtLastFetch != bitPos0b) {
-        // something moved the position between the last
-        // call to hasNext, and this call to next.
-        // (or between two calls to hasNext()
-        // so we have to invalidate any character
-        // cached by hasNext.
-        ist.isFetched = false
-      }
-      if (!ist.isFetched) ist.isFetched = fetch()
-      if (!ist.isFetched) throw new NoSuchElementException()
-      val dataBitPosBefore0b = bitPos0b
-      val c = ist.cb.get(0)
-      ist.isFetched = false
-      val newBitPos0b = bitPos0b + ist.deltaBits
-      setBitPos0b(newBitPos0b)
-      c
-    }
-  }
-
-  def asIteratorChar: Iterator[Char] = CharIterator
+  def asIteratorChar: Iterator[Char] = st.charIterator
 
   /*
    * Debugger support
@@ -1359,4 +1075,347 @@ final class ByteBufferDataInputStream private (data: ByteBuffer, initialBitPos0b
     }
     bb.asReadOnlyBuffer()
   }
+
 }
+
+private class CharIteratorState { // CharIterator state
+  var cb = CharBuffer.allocate(2) // allow for 2 in case of surrogate pair
+  var deltaBits: Int = 0
+  var isFetched = false
+  var bitPos0bAtLastFetch = 0L
+  // any members added here must be added to assignFrom below.
+}
+
+class CharIterator(st: MarkState, dis: ByteBufferDataInputStream) extends Iterator[Char] {
+
+  private val ist = new CharIteratorState
+
+  def assignFrom(other: CharIterator) {
+    this.ist.cb = other.ist.cb
+    this.ist.deltaBits = other.ist.deltaBits
+    this.ist.isFetched = other.ist.isFetched
+    this.ist.bitPos0bAtLastFetch = other.ist.bitPos0bAtLastFetch
+  }
+
+  def reset() {
+    ist.isFetched = false
+    ist.cb.clear()
+    ist.deltaBits = 0
+    st.decoder.reset()
+  }
+
+  /**
+   * returns false if unable to fetch a character
+   * returns true if it is able.
+   * Stores number of bits consumed by the character
+   * in deltaBits
+   */
+  private def fetch(): Boolean = {
+    val dataBitPosBefore0b = dis.bitPos0b
+    dis.align(st.encodingMandatoryAlignmentInBits)
+    ist.bitPos0bAtLastFetch = dis.bitPos0b // keep track of where we start trying to fetch a character
+    ist.cb.clear()
+    ist.cb.limit(1)
+    st.decoder.reset()
+    val maybeNumChars = dis.fillCharBuffer(ist.cb) // throws if a decode error and encodingErrorPolicy="error"
+    if (maybeNumChars.isEmpty) {
+      // Couldn't get one character
+      ist.deltaBits = 0
+      return false
+    }
+    // got 1 character 
+    val dataBitPosAfter0b = dis.bitPos0b
+    ist.deltaBits = (dataBitPosAfter0b - dataBitPosBefore0b).toInt
+    dis.setBitPos0b(dataBitPosBefore0b) // restore data position so we aren't advancing if called by hasNext
+    true
+  }
+
+  def hasNext(): Boolean = {
+    if (ist.bitPos0bAtLastFetch != dis.bitPos0b) {
+      // something moved the position between the last
+      // call to hasNext, and this call to next.
+      // (or between two calls to hasNext()
+      // so we have to invalidate any character
+      // cached by hasNext.
+      ist.isFetched = false
+    }
+    if (!ist.isFetched) ist.isFetched = fetch()
+    ist.isFetched
+  }
+
+  def next(): Char = {
+    if (ist.bitPos0bAtLastFetch != dis.bitPos0b) {
+      // something moved the position between the last
+      // call to hasNext, and this call to next.
+      // (or between two calls to hasNext()
+      // so we have to invalidate any character
+      // cached by hasNext.
+      ist.isFetched = false
+    }
+    if (!ist.isFetched) ist.isFetched = fetch()
+    if (!ist.isFetched) throw new NoSuchElementException()
+    val dataBitPosBefore0b = dis.bitPos0b
+    val c = ist.cb.get(0)
+    ist.isFetched = false
+    val newBitPos0b = dis.bitPos0b + ist.deltaBits
+    dis.setBitPos0b(newBitPos0b)
+    c
+  }
+}
+
+private sealed trait LongConverter {
+
+  def getSignedLong(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Maybe[Long]
+
+  /**
+   * Allows for 9 bytes. which we may need if there is a bit-offset such that the
+   * bits straddle 9 bytes. E.g., at offset 7, a 59 bit length will straddle 9 bytes, using
+   * 1 bit from the first byte, and 2 bits from the last byte.
+   */
+  protected val smallBuf = ByteBuffer.allocate(9)
+
+  protected final def wrapUp(bitLengthFrom1To64: Int, cooked: Long, dis: ByteBufferDataInputStream): Long = {
+    dis.setBitPos0b(dis.bitPos0b + bitLengthFrom1To64)
+    val cookedFor1Bit = if (bitLengthFrom1To64 == 1 && cooked == -1) 1 else cooked
+    cookedFor1Bit
+  }
+
+  private def haveEnoughBits(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Boolean = {
+    Assert.invariant(dis.bitLimit0b.isDefined)
+    val bitLim = dis.bitLimit0b.get
+    if (dis.bitPos0b + bitLengthFrom1To64 > bitLim) false
+    else true
+  }
+
+  protected final def populateSmallBuf(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Maybe[Int] = {
+    if (!haveEnoughBits(bitLengthFrom1To64, dis)) return Nope
+    val nBytesNeeded = dis.computeNBytesNeeded(bitLengthFrom1To64, dis.st.bitOffset0b)
+    val savedDataLimit = dis.data.limit()
+    dis.data.limit(dis.data.position() + nBytesNeeded)
+    val savedBytePos0b = dis.data.position()
+    smallBuf.clear()
+    smallBuf.put(dis.data).flip // puts until data runs out of bytes (hits limit) or smallBuf is full.
+    dis.data.position(savedBytePos0b)
+    dis.data.limit(savedDataLimit) // restore data limit
+    One(nBytesNeeded)
+  }
+
+  protected final def bigEndianBytesToSignedLong(bb: ByteBuffer, lengthInBytes: Int,
+    startingByteOffset0b: Int, bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Long = {
+    var accumulator = 0L
+    var i = 0
+    while (i < lengthInBytes) {
+      accumulator <<= 8
+      accumulator += Bits.asUnsignedByte(smallBuf.get(i + startingByteOffset0b))
+      i += 1
+    }
+    val value = dis.unSignExtend(accumulator, bitLengthFrom1To64) // ?? Redundant ??
+    val signed = dis.signExtend(value, bitLengthFrom1To64)
+    wrapUp(bitLengthFrom1To64, signed, dis)
+  }
+}
+
+private object Converter_BE_MSBFirst extends LongConverter {
+
+  final def getSignedLong(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Maybe[Long] = {
+    val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64, dis)
+    val result =
+      maybeNBytesNeeded.map {
+        nBytesNeeded =>
+          //
+          // smallBuf now contains the bytes we need to create the value
+          // and at this point we know we will successfully create a value.
+          //
+          val numBitsInLastByte = (dis.bitPos0b + bitLengthFrom1To64) % 8
+          val lastByteShift = if (numBitsInLastByte == 0) 0 else 8 - numBitsInLastByte
+          Bits.shiftRight(smallBuf, lastByteShift.toInt)
+          val lim = smallBuf.limit
+          val numBitsInFirstByte = math.max(8 - dis.st.bitOffset0b - lastByteShift, 0)
+          //
+          // The shift above, if done, may have shifted all the bits
+          // out of the left-most byte of the smallBuf. If so we
+          // don't want to include that byte in computing the value
+          //
+          val (numBytesRemaining, offset) =
+            if (numBitsInFirstByte > 0) {
+              // we didn't shift every bit out of the first byte
+              (nBytesNeeded, 0)
+            } else {
+              // we shifted every bit out of the first byte
+              (nBytesNeeded - 1, 1)
+            }
+          //
+          // Now we just accumulate the bytes into the result value.
+          //
+          bigEndianBytesToSignedLong(smallBuf, numBytesRemaining, offset, bitLengthFrom1To64, dis)
+      }
+    result
+  }
+
+}
+
+private object Converter_LE_MSBFirst extends LongConverter {
+
+  final def getSignedLong(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Maybe[Long] = {
+    val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64, dis)
+
+    val result = maybeNBytesNeeded.map { nBytesNeeded =>
+      //
+      // smallBuf now contains the bytes we need to create the value
+      // and at this point we know we will successfully create a value.
+      //
+      if (smallBuf.limit() == 1) {
+        //
+        // only 1 byte holds the entire representation
+        //
+        // It is worth special case code for this, because many bit fields
+        // are just one or a small handful of bits, so many will live in 
+        // just one byte.
+        //
+        val bitLimitOffset0b = (dis.bitPos0b + bitLengthFrom1To64) % 8
+        val numUnusedBits = if (bitLimitOffset0b == 0) 0 else 8 - bitLimitOffset0b
+        val theByte = Bits.asUnsignedByte(smallBuf.get(0))
+        val mask = -1.toByte >>> dis.st.bitOffset0b
+        val maskedByte = (theByte >>> numUnusedBits) & mask
+        val result = dis.signExtend(maskedByte, bitLengthFrom1To64)
+        wrapUp(bitLengthFrom1To64, result, dis)
+      } else {
+        //
+        // There are two or more bytes holding the representation. 
+        //
+        // The bits of interest start somewhere in the first byte of smallBuf
+        // (bitOffset0b tells us exactly where)
+        // and end also in that byte or in some later byte at farthest in the 9th byte
+        // of smallBuf. (bitOffset0b + bitLengthFrom1To64) tell us exactly where
+        // it ends and how far away that is.
+        //
+        // The order of bytes in smallBuf is exactly as those bytes appeared in 
+        // the data stream.
+        // 
+        // Per the DFDL spec, the start position cannot affect the value. So 
+        // we can shift left (because bit order is MSBFirst) until the first bit
+        // is the most significant bit of the first byte.
+        //
+        Bits.shiftLeft(smallBuf, dis.st.bitOffset0b)
+        //
+        // Now, there's a possibility that this shift shifted all bits of interest
+        // out of the last byte of smallBuf
+        //
+        val limitingBitPos0b = dis.bitPos0b + bitLengthFrom1To64 // last bit position + 1 is the 'limiting' bit.
+        val numBitsInLastByte = {
+          val m = limitingBitPos0b % 8
+          if (m == 0) 8 else m
+        }
+        if (dis.st.bitOffset0b >= numBitsInLastByte) {
+          // the shift left above will leave no bits in the final byte. 
+          Assert.invariant(smallBuf.limit() > 1)
+          smallBuf.limit(smallBuf.limit - 1) // shorten it by 1 byte.
+        }
+        //
+        Bits.reverseBytes(smallBuf)
+        //
+        // now bytes of smallBuf are such that the most significant bits are in 
+        // the first byte, and least significant are in the last byte.
+        // 
+        // However, the most significant byte has the problem that the bits in it 
+        // are now in the most-significant end of that byte. They need to be shifted right
+        // to occupy the least significant bit locations of that byte.
+        //
+        val numBitsInNewFirstByte =
+          if (dis.st.bitOffset0b >= numBitsInLastByte) {
+            8 - (dis.st.bitOffset0b - numBitsInLastByte)
+          } else {
+            numBitsInLastByte - dis.st.bitOffset0b
+          }
+
+        val firstByte = smallBuf.get(0)
+
+        if (numBitsInNewFirstByte < 8) {
+          // there are some unused bits
+          val bitsUnused = 8 - numBitsInNewFirstByte
+          val newFirstByte = firstByte >> bitsUnused
+          smallBuf.put(0, newFirstByte.toByte)
+        }
+        //
+        // Now the smallBuf bytes contain our big-endian value, 
+        //
+        bigEndianBytesToSignedLong(smallBuf, smallBuf.remaining(), 0, bitLengthFrom1To64, dis)
+      }
+    }
+    result
+  }
+
+}
+
+private object Converter_LE_LSBFirst extends LongConverter {
+
+  final def getSignedLong(bitLengthFrom1To64: Int, dis: ByteBufferDataInputStream): Maybe[Long] = {
+    val maybeNBytesNeeded = populateSmallBuf(bitLengthFrom1To64, dis)
+    val result = maybeNBytesNeeded.map { nBytesNeeded =>
+      //
+      // smallBuf now contains the bytes we need to create the value
+      // and at this point we know we will successfully create a value.
+      //
+      // The bits of interest start somewhere in the first byte of smallBuf
+      // (bitOffset0b tells us exactly where, though because bit order is 
+      // LSBFirst, those bits occupy the most-significant bits of that first byte
+      // 
+      // and end also in that byte or in some later byte at farthest in the 9th byte
+      // of smallBuf. (bitOffset0b + bitLengthFrom1To64) tell us exactly where
+      // it ends and how far away that is, again bit order tells us that
+      // those bits in the last byte are in the least significant bits of that byte
+      //
+      // The order of bytes in smallBuf is exactly as those bytes appeared in 
+      // the data stream.
+      //
+      // in order to be able to shift the bits around we must reverse the bits 
+      // within the bytes
+      Bits.reverseBitsWithinBytes(smallBuf)
+      //
+      // The bit-string is now properly continuous across all the byte boundaries
+      // The bits of interest in the first byte are the least significant bits
+      // and the bits of interest in the last byte are the most significant bits
+      //
+      val numBitsInFirstByte = 8 - dis.st.bitOffset0b
+      val numUnusedBitsInFirstByte = 8 - numBitsInFirstByte
+      Bits.shiftLeft(smallBuf, numUnusedBitsInFirstByte)
+      //
+      // Did we shift away all bits in the last byte?
+      val numBitsInLastByteInitially = {
+        val m = (dis.bitPos0b + bitLengthFrom1To64) % 8
+        if (m == 0) 8 else m
+      }
+      val numUnusedBitsInLastByteInitially = 8 - numBitsInLastByteInitially
+      // 
+      // The left shift above, if done, may have shifted all the bits
+      // out of the right-most byte of the smallBuf. If so we
+      // don't want to include that byte in computing the value
+      //
+      val numBitsRemainingInLastByte = math.max(8 - numUnusedBitsInLastByteInitially - numUnusedBitsInFirstByte, 0)
+      val numBytesRemaining =
+        if (numBitsRemainingInLastByte > 0) {
+          // we didn't shift every bit out of the last byte
+          nBytesNeeded
+        } else {
+          // we shifted every bit out of the last byte
+          nBytesNeeded - 1
+        }
+      Assert.invariant(numBytesRemaining == smallBuf.limit || numBytesRemaining == (smallBuf.limit - 1))
+      smallBuf.limit(numBytesRemaining)
+
+      // Now we can reverse the bits back to their original bit order
+      // and then reverse the bytes to reflect little-endian
+
+      Bits.reverseBytesAndReverseBits(smallBuf)
+      //
+      // We know now that any unused bits of the first byte are the most-significant
+      // bits and all other bytes are full (all 8 bits in use).
+      //
+      // So we have ordinary big-endian bytes now and can construct the result value
+      //
+      bigEndianBytesToSignedLong(smallBuf, numBytesRemaining, 0, bitLengthFrom1To64, dis)
+    }
+    result
+  }
+}
+

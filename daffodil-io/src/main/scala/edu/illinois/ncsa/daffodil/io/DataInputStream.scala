@@ -95,6 +95,17 @@ import edu.illinois.ncsa.daffodil.util.OnStack
  */
 
 object DataInputStream {
+  /*
+   * These limits will come from tunables, or just hard implementation-specific
+   * thresholds.
+   */
+  trait Limits {
+    def maximumSimpleElementSizeInBytes: Long
+    def maximumSimpleElementSizeInCharacters: Long
+    def maximumForwardSpeculationLengthInBytes: Long
+    def maximumRegexMatchLengthInCharacters: Long
+    def defaultInitialRegexMatchLimitInChars: Long
+  }
 
   /**
    * Backtracking
@@ -171,18 +182,6 @@ trait DataInputStream {
    * of dynamic cache.
    */
   def setLimits(newLimits: Limits): Unit
-
-  /*
-   * These limits will come from tunables, or just hard implementation-specific
-   * thresholds.
-   */
-  trait Limits {
-    def maximumSimpleElementSizeInBytes: Long
-    def maximumSimpleElementSizeInCharacters: Long
-    def maximumForwardSpeculationLengthInBytes: Long
-    def maximumRegexMatchLengthInCharacters: Long
-    def defaultInitialRegexMatchLimitInChars: Long
-  }
 
   /*
    * Setters for all the text and binary characteristics.
